@@ -79,6 +79,8 @@ export interface DataStore {
 
   listTransactions(): Promise<Transaction[]>;
   getTransaction(id: UUID): Promise<Transaction | null>;
+  /** Milestones live in a jsonb array, so they are updated by label. */
+  updateTransactionMilestone(id: UUID, label: string, complete: boolean): Promise<Transaction>;
 
   listTasks(): Promise<Task[]>;
   createTask(task: Omit<Task, "id" | "createdAt" | "updatedAt">): Promise<Task>;
@@ -146,9 +148,4 @@ export async function getStore(): Promise<DataStore> {
     cached = new MemoryStore();
   }
   return cached;
-}
-
-/** Test seam — lets unit tests inject a store without touching env. */
-export function __setStoreForTests(store: DataStore | null) {
-  cached = store;
 }

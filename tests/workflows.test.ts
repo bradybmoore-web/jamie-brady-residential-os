@@ -239,3 +239,127 @@ describe("assistant", () => {
     await expect(runAssistant([], ID.jamie)).rejects.toThrow();
   });
 });
+
+describe("cached brief stays current", () => {
+  it("drops a priority whose task has been completed, without re-running the model", async () => {
+    const store = await getStore();
+    const first = await dailyCommandCenter(ID.jamie, { force: true });
+
+    const taskPriority = first.brief.peopleNeedingAttention.find((p) => p.id.startsWith("task:"))!;
+    expect(taskPriority).toBeDefined();
+    const taskId = taskPriority.id.split(":")[1];
+    await store.updateTask(taskId, { status: "done", completedAt: new Date().toISOString() });
+
+    const second = await dailyCommandCenter(ID.jamie);
+    expect(second.brief.peopleNeedingAttention.some((p) => p.id === taskPriority.id)).toBe(false);
+    // Still one run: the language was reused, only the state was recomputed.
+    expect((await store.listAIRuns()).filter((r) => r.workflow === "daily_command_center")).toHaveLength(1);
+  });
+
+  it("drops a relationship card once the person has actually been spoken to", async () => {
+    const store = await getStore();
+    const first = await dailyCommandCenter(ID.jamie, { force: true });
+    const relationship = first.brief.peopleNeedingAttention.find((p) => p.id.startsWith("relationship:"))!;
+    expect(relationship).toBeDefined();
+
+    await store.updateContact(relationship.personId!, { lastPersonalContactAt: new Date().toISOString() });
+
+    const second = await dailyCommandCenter(ID.jamie);
+    expect(second.brief.peopleNeedingAttention.some((p) => p.id === relationship.id)).toBe(false);
+  });
+
+  it("drops a lead card once it has been worked today", async () => {
+    const store = await getStore();
+    const first = await dailyCommandCenter(ID.jamie, { force: true });
+    const leadPriority = first.brief.peopleNeedingAttention.find((p) => p.id.startsWith("lead:"))!;
+    const leadId = leadPriority.id.split(":")[1];
+
+    await store.updateLead(leadId, { lastAttemptAt: new Date().toISOString(), attemptCount: 1 });
+
+    const second = await dailyCommandCenter(ID.jamie);
+    expect(second.brief.peopleNeedingAttention.some((p) => p.id === leadPriority.id)).toBe(false);
+  });
+
+  it("recomputes the metric strip rather than serving yesterday's numbers", async () => {
+    const store = await getStore();
+    const first = await dailyCommandCenter(ID.jamie, { force: true });
+    const before = first.brief.metrics.tasksDue;
+
+    const openTask = (await store.listTasks()).find((t) => t.status === "open" && t.ownerId === ID.jamie)!;
+    await store.updateTask(openTask.id, { status: "done", completedAt: new Date().toISOString() });
+
+    const second = await dailyCommandCenter(ID.jamie);
+    expect(second.brief.metrics.tasksDue).toBeLessThan(before);
+  });
+
+  it("keeps the top three in sync with what is left", async () => {
+    const store = await getStore();
+    const first = await dailyCommandCenter(ID.jamie, { force: true });
+    const top = first.brief.topPriorities[0];
+
+    if (top.personId) {
+      await store.updateContact(top.personId, { lastPersonalContactAt: new Date().toISOString() });
+    }
+
+    const second = await dailyCommandCenter(ID.jamie);
+    expect(second.brief.topPriorities).toEqual(second.brief.peopleNeedingAttention.slice(0, 3));
+  });
+});
+
+describe("transaction milestone cards", () => {
+  it("clears once the milestone that produced the card is complete", async () => {
+    const store = await getStore();
+    const first = await dailyCommandCenter(ID.jamie, { force: true });
+    const txPriority = first.brief.peopleNeedingAttention.find((p) => p.id.startsWith("tx:"))!;
+    expect(txPriority).toBeDefined();
+
+    const transactionId = txPriority.id.split(":")[1];
+    const transaction = (await store.getTransaction(transactionId))!;
+    const next = transaction.milestones
+      .filter((m) => !m.complete)
+      .sort((a, b) => a.dueAt.localeCompare(b.dueAt))[0];
+
+    await store.updateTransactionMilestone(transactionId, next.label, true);
+
+    const second = await dailyCommandCenter(ID.jamie);
+    expect(second.brief.peopleNeedingAttention.some((p) => p.id === txPriority.id)).toBe(false);
+  });
+
+  it("marks exactly the one milestone, leaving the rest of the contract alone", async () => {
+    const store = await getStore();
+    const transaction = (await store.listTransactions())[0];
+    const target = transaction.milestones.find((m) => !m.complete)!;
+
+    const updated = await store.updateTransactionMilestone(transaction.id, target.label, true);
+    expect(updated.milestones.find((m) => m.label === target.label)!.complete).toBe(true);
+    expect(updated.milestones.filter((m) => m.complete).length).toBe(
+      transaction.milestones.filter((m) => m.complete).length + 1,
+    );
+  });
+});
+
+describe("lead re-analysis", () => {
+  it("supersedes the previous unreviewed draft instead of stacking another", async () => {
+    const store = await getStore();
+    await analyzeLead(ID.leadReyes, ID.jamie);
+    await analyzeLead(ID.leadReyes, ID.jamie);
+    await analyzeLead(ID.leadReyes, ID.jamie);
+
+    const forLead = (await store.listAIActions()).filter((a) => a.leadId === ID.leadReyes);
+    expect(forLead).toHaveLength(3);
+    expect(forLead.filter((a) => a.status === "needs_review")).toHaveLength(1);
+    expect(forLead.filter((a) => a.status === "rejected")).toHaveLength(2);
+    for (const superseded of forLead.filter((a) => a.status === "rejected")) {
+      expect(superseded.rejectionReason).toMatch(/superseded/i);
+    }
+  });
+
+  it("does not touch a draft the user already approved", async () => {
+    const store = await getStore();
+    const { draftActionId } = await analyzeLead(ID.leadReyes, ID.jamie);
+    await store.updateAIAction(draftActionId!, { status: "approved" });
+
+    await analyzeLead(ID.leadReyes, ID.jamie);
+    expect((await store.getAIAction(draftActionId!))!.status).toBe("approved");
+  });
+});

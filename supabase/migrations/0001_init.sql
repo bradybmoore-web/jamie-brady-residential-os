@@ -502,6 +502,9 @@ create table public.ai_actions (
   reviewed_at timestamptz,
   executed_at timestamptz,
   rejection_reason text,
+  -- What actually happened on execution (e.g. "draft created in Gmail" vs
+  -- "Gmail not connected"). Recorded so the distinction survives the page load.
+  delivery_note text,
   requires_approval boolean not null default true,
   is_seed boolean not null default false,
   source_system source_system not null default 'ai',

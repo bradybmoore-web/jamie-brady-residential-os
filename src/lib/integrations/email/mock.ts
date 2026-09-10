@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { getStore } from "@/lib/data/store";
-import { daysBetween } from "@/lib/utils";
 import type {
   EmailAdapter,
   EmailMessage,
@@ -116,9 +115,4 @@ export class MockEmailAdapter implements EmailAdapter {
         : "No inquiry language detected; treated as ordinary correspondence.",
     };
   }
-}
-
-/** Hours an inbound message has waited. Used by the Today page. */
-export function hoursWaiting(message: EmailMessage) {
-  return Math.max(0, daysBetween(message.receivedAt) * 24);
 }

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { requireSession } from "@/lib/auth/session";
+import { capabilities } from "@/lib/env";
 import { getStore } from "@/lib/data/store";
 import { ApprovalQueue } from "@/components/approvals/queue";
 import { Card, CardContent, PageTitle, SectionTitle, Stat } from "@/components/ui/primitives";
@@ -28,11 +29,23 @@ export default async function ApprovalsPage() {
         </p>
       </header>
 
-      <Card className="mt-6 overflow-hidden">
+      {!capabilities.google ? (
+        <p className="mt-5 rounded-[6px] border border-line bg-warn-soft/50 px-4 py-3 text-[12.5px] leading-relaxed text-warn">
+          <strong className="font-semibold">Gmail is not connected.</strong> Approving and sending records the
+          decision here and nothing else — no message leaves this application. Connect Google in Settings and
+          &ldquo;Send&rdquo; will place a real draft in your Gmail drafts folder for you to send yourself.
+        </p>
+      ) : null}
+
+      <Card className="mt-5 overflow-hidden">
         <div className="grid divide-y divide-line sm:grid-cols-3 sm:divide-y-0 sm:divide-x">
           <Stat label="Waiting on you" value={waiting.length} tone={waiting.length > 0 ? "warn" : "neutral"} />
           <Stat label="Approved, not sent" value={approved.length} />
-          <Stat label="Handled" value={actions.filter((a) => a.status === "executed").length} tone="good" />
+          <Stat
+            label={capabilities.google ? "Sent" : "Handled"}
+            value={actions.filter((a) => a.status === "executed").length}
+            tone="good"
+          />
         </div>
       </Card>
 
@@ -59,11 +72,18 @@ export default async function ApprovalsPage() {
             <CardContent className="pt-4">
               <ul className="flex flex-col divide-y divide-line">
                 {settled.map((a) => (
-                  <li key={a.id} className="flex items-center justify-between gap-3 py-2 first:pt-0 last:pb-0">
-                    <span className="truncate text-[12.5px] text-ink">{a.title}</span>
-                    <span className="shrink-0 text-[11.5px] text-ink-faint">
-                      {a.status === "executed" ? "Sent" : "Rejected"}
-                    </span>
+                  <li key={a.id} className="py-2.5 first:pt-0 last:pb-0">
+                    <div className="flex items-baseline justify-between gap-3">
+                      <span className="truncate text-[12.5px] text-ink">{a.title}</span>
+                      <span className="shrink-0 text-[11.5px] text-ink-faint">
+                        {a.status === "executed" ? (capabilities.google ? "Sent" : "Handled") : "Rejected"}
+                      </span>
+                    </div>
+                    {a.deliveryNote ? (
+                      <p className="mt-0.5 text-[11.5px] leading-relaxed text-ink-faint">{a.deliveryNote}</p>
+                    ) : a.rejectionReason ? (
+                      <p className="mt-0.5 text-[11.5px] leading-relaxed text-ink-faint">{a.rejectionReason}</p>
+                    ) : null}
                   </li>
                 ))}
               </ul>

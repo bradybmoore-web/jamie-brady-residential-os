@@ -5,10 +5,10 @@ import { recordRun } from "@/lib/ai/audit";
 import { EvidenceLedger, groundEvidence } from "@/lib/ai/grounding";
 import { FACTS_RULE } from "@/lib/ai/prompts/writing";
 import { getStore } from "@/lib/data/store";
-import { buildContext, listingAddress } from "@/lib/scoring/context";
+import { buildContext, listingAddress, type WorkContext } from "@/lib/scoring/context";
 import { buildListingActions, buildMetrics, buildPriorities, listingsNeedingSellerUpdate, type PriorityCandidate } from "@/lib/scoring/priorities";
-import { isSameLocalDay, localDayKey } from "@/lib/utils";
-import type { DailyBrief, Evidence, Priority, UUID } from "@/lib/types";
+import { daysBetween, isSameLocalDay, localDayKey } from "@/lib/utils";
+import type { DailyBrief, Dataset, Priority, UUID } from "@/lib/types";
 
 export const DAILY_PROMPT_VERSION = "daily_command_center@3";
 
@@ -67,7 +67,14 @@ export async function dailyCommandCenter(
   if (!opts?.force) {
     const cached = await store.getDailyBrief(date, ownerId);
     if (cached) {
-      return { brief: cached, usedFallback: false, provider: "mock" };
+      // Cache the *language*, recompute the *state*. Re-running the model on
+      // every page view would be wasteful, but a brief that still lists work
+      // Jamie finished an hour ago is worse than useless — she stops trusting
+      // the list. So the written openers are reused and everything derived from
+      // the data is rebuilt.
+      const dataset = await store.snapshot();
+      const ctx = buildContext(dataset, ownerId, now);
+      return { brief: refreshBrief(cached, ctx, dataset, now), usedFallback: false, provider: "mock" };
     }
   }
 
@@ -264,12 +271,80 @@ function templateMessage(candidate: PriorityCandidate): string {
   }
 }
 
+/**
+ * Recompute the parts of a cached brief that come from data, and drop
+ * priorities that have since been handled.
+ *
+ * Deterministic and cheap — no model call. A priority is considered handled
+ * when the record behind it says so: the task is closed, the lead was worked,
+ * the person was spoken to, or the contract milestone is done.
+ */
+function refreshBrief(cached: DailyBrief, ctx: WorkContext, dataset: Dataset, now: Date): DailyBrief {
+  const remaining = cached.peopleNeedingAttention.filter((priority) => !isHandled(priority, dataset, now));
+
+  return {
+    ...cached,
+    peopleNeedingAttention: remaining,
+    topPriorities: remaining.slice(0, 3),
+    metrics: buildMetrics(ctx, { ownerOnly: true }),
+    listingActions: buildListingActions(ctx, { ownerOnly: true }),
+    appointments: dataset.calendarEvents
+      .filter((e) => e.ownerId === cached.ownerId && isSameLocalDay(e.startsAt, now))
+      .sort((a, b) => a.startsAt.localeCompare(b.startsAt))
+      .map((e) => e.id),
+    sellerUpdates: dataset.sellerUpdates
+      .filter((u) => u.status === "needs_review" || u.status === "draft")
+      .map((u) => u.id),
+    opportunities: dataset.opportunities
+      .filter((o) => o.status === "open" && o.ownerId === cached.ownerId)
+      .map((o) => o.id),
+  };
+}
+
+function isHandled(priority: Priority, dataset: Dataset, now: Date): boolean {
+  const [kind, id] = priority.id.split(":");
+
+  if (kind === "task") {
+    const task = dataset.tasks.find((t) => t.id === id);
+    return !task || task.status !== "open";
+  }
+
+  if (kind === "lead") {
+    const lead = dataset.leads.find((l) => l.id === id);
+    if (!lead) return true;
+    if (["converted", "closed", "lost"].includes(lead.stage)) return true;
+    // Worked today — it should not reappear until the next follow-up falls due.
+    return Boolean(lead.lastAttemptAt && isSameLocalDay(lead.lastAttemptAt, now));
+  }
+
+  if (kind === "relationship") {
+    const contact = dataset.contacts.find((c) => c.id === id);
+    if (!contact) return true;
+    return Boolean(contact.lastPersonalContactAt && isSameLocalDay(contact.lastPersonalContactAt, now));
+  }
+
+  if (kind === "tx") {
+    const transaction = dataset.transactions.find((t) => t.id === id);
+    if (!transaction) return true;
+    if (transaction.status === "closed" || transaction.status === "terminated") return true;
+    // The card exists because a milestone falls due within three days. Once
+    // that one is complete, it is handled — the next one earns its own card.
+    const next = transaction.milestones
+      .filter((m) => !m.complete)
+      .sort((a, b) => a.dueAt.localeCompare(b.dueAt))[0];
+    if (!next) return true;
+    // The card names one specific milestone. Once the contract has moved past
+    // it, the card is stale even if the next deadline is also close — a card
+    // that says "structural engineer walkthrough" after that is done is worse
+    // than no card, because it teaches Jamie the list is not to be trusted.
+    if (!priority.title.startsWith(next.label)) return true;
+    return -daysBetween(next.dueAt, now) > 3;
+  }
+
+  return false;
+}
+
 /** "1912 Sunfish Cove, Cedar Park, TX 78613" -> "Sunfish Cove". */
 function streetOf(address: string) {
   return address.split(",")[0].replace(/^\d+\s+/, "").trim() || address;
-}
-
-/** Exposed so the Today page can render evidence without re-deriving it. */
-export function evidenceSummary(evidence: Evidence[]) {
-  return evidence.map((e) => `${e.label}: ${e.detail}`);
 }

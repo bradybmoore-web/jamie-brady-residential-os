@@ -68,10 +68,17 @@ export default async function LeadsPage({
 }) {
   await requireSession();
   const params = await searchParams;
-  const view = (VIEWS.find((v) => v.key === params.view)?.key ?? "new") as ViewKey;
-
   const store = await getStore();
   const leads = (await store.listLeads()).sort((a, b) => b.score - a.score);
+
+  // An explicitly chosen view is always honoured. Without one, land on the
+  // first view that actually has something in it — arriving on an empty "New"
+  // tab when four follow-ups are overdue is the wrong first impression.
+  const requested = VIEWS.find((v) => v.key === params.view)?.key;
+  const view = (requested ??
+    VIEWS.find((v) => filterLeads(leads, v.key).length > 0)?.key ??
+    "new") as ViewKey;
+
   const visible = filterLeads(leads, view);
 
   return (

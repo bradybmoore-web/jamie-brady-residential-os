@@ -161,6 +161,16 @@ export class MemoryStore implements DataStore {
   async getTransaction(id: UUID) {
     return dataset().transactions.find((t) => t.id === id) ?? null;
   }
+  async updateTransactionMilestone(id: UUID, label: string, complete: boolean) {
+    const transaction = dataset().transactions.find((t) => t.id === id);
+    if (!transaction) throw new Error(`Transaction ${id} not found`);
+    return patchRow(
+      dataset().transactions,
+      id,
+      { milestones: transaction.milestones.map((m) => (m.label === label ? { ...m, complete } : m)) },
+      "Transaction",
+    );
+  }
 
   async listTasks(): Promise<Task[]> {
     return dataset().tasks;

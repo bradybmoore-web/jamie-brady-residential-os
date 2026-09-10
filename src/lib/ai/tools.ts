@@ -2,7 +2,7 @@ import "server-only";
 import { getStore } from "@/lib/data/store";
 import { getEmailAdapter } from "@/lib/integrations/email";
 import { getMlsProvider } from "@/lib/integrations/mls";
-import { buildContext, listingAddress } from "@/lib/scoring/context";
+import { buildContext } from "@/lib/scoring/context";
 import { buildPriorities } from "@/lib/scoring/priorities";
 import { dailyCommandCenter } from "@/lib/workflows/daily-command-center";
 import {
@@ -785,6 +785,3 @@ export async function executeTool(
     return `Tool "${name}" failed: ${error instanceof Error ? error.message : String(error)}`;
   }
 }
-
-/** Address formatter shared with the assistant's summary line. */
-export { listingAddress };

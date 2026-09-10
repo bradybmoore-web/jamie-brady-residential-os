@@ -107,7 +107,10 @@ export async function executeActionItem(actionId: string): Promise<ActionResult>
     if (!item) return { ok: false, error: "That item no longer exists." };
     if (item.status !== "approved") return { ok: false, error: "Approve it first." };
 
-    let message = "Marked as sent.";
+    let message =
+      item.type === "email_draft"
+        ? "Marked as handled. No recipient was set, so there was nothing to place in a mailbox."
+        : "Marked as handled.";
 
     if (item.type === "email_draft" && item.recipient) {
       const adapter = await getEmailAdapter();
@@ -121,7 +124,11 @@ export async function executeActionItem(actionId: string): Promise<ActionResult>
         : (result.note ?? "Gmail is not connected, so nothing was placed in your mailbox.");
     }
 
-    await store.updateAIAction(actionId, { status: "executed", executedAt: new Date().toISOString() });
+    await store.updateAIAction(actionId, {
+      status: "executed",
+      executedAt: new Date().toISOString(),
+      deliveryNote: message,
+    });
     await audit(store, {
       actorId: ownerId,
       actorType: "user",

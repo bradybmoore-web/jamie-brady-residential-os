@@ -101,3 +101,32 @@ describe("cloze adapter", () => {
     expect(result.supported).toBe(false);
   });
 });
+
+describe("execution is honest about what happened", () => {
+  it("records that nothing left the application when Gmail is not connected", async () => {
+    const store = await getStore();
+    const { draftActionId } = await analyzeLead(ID.leadReyes, ID.jamie);
+    const id = draftActionId!;
+
+    await store.updateAIAction(id, { status: "approved" });
+    // Mirrors executeActionItem's behaviour without pulling in next/cache.
+    const { MockEmailAdapter } = await import("@/lib/integrations/email/mock");
+    const item = (await store.getAIAction(id))!;
+    const result = await new MockEmailAdapter().draftEmail({
+      to: item.recipient!,
+      subject: item.subject ?? "",
+      body: item.body,
+    });
+    await store.updateAIAction(id, {
+      status: "executed",
+      executedAt: new Date().toISOString(),
+      deliveryNote: result.note,
+    });
+
+    const executed = (await store.getAIAction(id))!;
+    expect(executed.deliveryNote).toMatch(/not connected|approval queue/i);
+    // The note has to survive the page load — that is the entire point of it.
+    expect(executed.deliveryNote).toBeTruthy();
+    expect(executed.status).toBe("executed");
+  });
+});

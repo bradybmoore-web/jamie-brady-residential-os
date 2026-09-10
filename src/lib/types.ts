@@ -558,6 +558,13 @@ export interface AIAction extends BaseRecord {
   reviewedAt?: ISODate | null;
   executedAt?: ISODate | null;
   rejectionReason?: string | null;
+  /**
+   * What actually happened when this was executed — "draft created in Gmail",
+   * or "Gmail not connected, nothing left the application". Persisted rather
+   * than shown transiently, because the difference matters and a toast that
+   * disappears is how someone comes to believe an email was sent.
+   */
+  deliveryNote?: string | null;
   /** True when this action may never be auto-executed without a human. */
   requiresApproval: boolean;
 }

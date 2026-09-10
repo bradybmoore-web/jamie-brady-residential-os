@@ -139,7 +139,7 @@ export function AssistantChat({
             rows={1}
             placeholder="Ask about your leads, listings, buyers, calendar or relationships…"
             aria-label="Ask the assistant"
-            className="min-h-[38px] resize-none border-0 bg-transparent p-1.5 focus-visible:outline-none"
+            className="min-h-[38px] resize-none border-0 bg-transparent p-1.5"
           />
           <Button type="submit" variant="primary" size="sm" disabled={busy || !input.trim()} aria-label="Send">
             <ArrowUp className="size-3.5" strokeWidth={2.25} aria-hidden />

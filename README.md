@@ -164,9 +164,15 @@ in the interface.
 ```bash
 npm run lint       # eslint, zero warnings tolerated
 npm run typecheck  # tsc --noEmit
-npm run test       # vitest — 89 tests
+npm run test       # vitest — 99 unit and integration tests
 npm run build      # production build
 npm run check      # all four, in order
+
+# End-to-end, against a running server (login, priority cards, marketing
+# generation, the approval queue, the assistant, mobile layout):
+npx playwright install chromium
+npm run build && npm run start   # in another terminal
+npm run test:e2e
 ```
 
 ---
@@ -401,7 +407,9 @@ Stated plainly, because a demo that pretends otherwise wastes everyone's time.
 5. **MLS data is a mock feed.** Every screen that uses it says so, and the seller
    update panel warns before you would send figures to a seller.
 6. **Nothing is actually sent.** By design for the MVP: approving an email marks
-   it executed and stages a Gmail draft. There is no SMS transport at all.
+   it executed and stages a Gmail draft. There is no SMS transport at all. The
+   Approvals page says this outright while Gmail is unconnected, and records
+   what actually happened on each executed item.
 7. **No background scheduler.** Workflows run on request. The daily brief is
    cached per day; opportunities are regenerated on demand.
 8. **Desktop-first.** Responsive down to phone width, but the dense tables are
@@ -458,7 +466,7 @@ src/
     workflows/      The six named workflows
 supabase/migrations/  Schema and RLS
 scripts/              Supabase seed loader
-tests/                89 unit and integration tests
+tests/                99 unit and integration tests, plus tests/e2e/ browser smoke
 ```
 
 `IMPLEMENTATION_NOTES.md` records the architectural decisions and the

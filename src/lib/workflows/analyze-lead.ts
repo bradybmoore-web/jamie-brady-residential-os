@@ -120,6 +120,19 @@ export async function analyzeLead(
   let updated = lead;
 
   if (opts?.persist !== false) {
+    // Re-analysing supersedes the previous draft. A queue that accumulates
+    // three versions of the same reply is a queue Jamie stops reading.
+    for (const existing of await store.listAIActions()) {
+      if (existing.leadId !== lead.id) continue;
+      if (existing.workflow !== "analyze_lead") continue;
+      if (existing.status !== "needs_review" && existing.status !== "draft") continue;
+      await store.updateAIAction(existing.id, {
+        status: "rejected",
+        rejectionReason: "Superseded by a newer analysis of this lead.",
+        reviewedAt: new Date().toISOString(),
+      });
+    }
+
     // The drafted reply becomes an approval item. Nothing is ever sent from here.
     const action = await store.createAIAction({
       aiRunId: run.id,

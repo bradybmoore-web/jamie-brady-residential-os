@@ -70,8 +70,9 @@ Status legend: `[x]` done · `[~]` done with a mock/stub behind a real interface
 - [x] Seed data (Lothian, Brackenridge, American Dr + contacts, leads, buyers, tasks)
 - [x] README
 - [x] `.env.example`
-- [x] Unit tests (vitest) for scoring, grounding, prompts, workflows
-- [x] `lint` + `typecheck` + `test` + production `build` all green
+- [x] Unit tests (vitest) for scoring, grounding, prompts, workflows — 99 tests
+- [x] Browser end-to-end smoke suite (`npm run test:e2e`) — 31 assertions
+- [x] `lint` + `typecheck` + `test` + production `build` all green (`npm run check`)
 
 ## Deferred (explicitly out of MVP scope)
 - [ ] Real outbound send (email/SMS transport)

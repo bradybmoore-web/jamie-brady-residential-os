@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
-import { Check, ChevronDown, Mail, Phone, Plus, User } from "lucide-react";
+import { Check, ChevronDown, Mail, Plus, User } from "lucide-react";
 import { Badge, Button, Card, UrgencyDot, buttonClasses } from "@/components/ui/primitives";
 import { createTaskAction, dismissPriorityAction } from "@/app/actions/tasks";
 import { CHANNEL_LABELS, type Priority } from "@/lib/types";
@@ -176,9 +176,4 @@ export function PriorityCard({ priority, rank }: { priority: Priority; rank: num
       </div>
     </Card>
   );
-}
-
-export function ChannelIcon({ channel }: { channel: Priority["recommendedChannel"] }) {
-  if (channel === "call") return <Phone className="size-3.5" strokeWidth={1.75} aria-hidden />;
-  return <Mail className="size-3.5" strokeWidth={1.75} aria-hidden />;
 }

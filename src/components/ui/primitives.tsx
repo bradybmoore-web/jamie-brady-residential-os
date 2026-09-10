@@ -38,15 +38,6 @@ export function CardContent({ className, ...props }: React.ComponentProps<"div">
   return <div className={cn("px-5 pb-5", className)} {...props} />;
 }
 
-export function CardFooter({ className, ...props }: React.ComponentProps<"div">) {
-  return (
-    <div
-      className={cn("flex flex-wrap items-center gap-2 border-t border-line px-5 py-3", className)}
-      {...props}
-    />
-  );
-}
-
 /* ---------------------------------------------------------------- button */
 
 type ButtonVariant = "primary" | "secondary" | "ghost" | "danger" | "link";
@@ -173,10 +164,6 @@ export function Label({ className, ...props }: React.ComponentProps<"label">) {
 
 /* --------------------------------------------------------------- layout */
 
-export function Separator({ className, ...props }: React.ComponentProps<"div">) {
-  return <div role="separator" className={cn("h-px w-full bg-line", className)} {...props} />;
-}
-
 export function EmptyState({
   title,
   description,
@@ -278,26 +265,12 @@ export function Stat({
   );
 }
 
-/* ------------------------------------------------------------ link button */
+/* ----------------------------------------------------------- link styling */
 
 /**
- * A link styled as a button. Kept separate from `Button` rather than using an
- * `asChild` polymorphic prop — navigation and actions behave differently
+ * Button styling for a `next/link`. Kept as a class helper rather than an
+ * `asChild` polymorphic component — navigation and actions behave differently
  * enough (prefetch, middle-click, keyboard) that conflating them causes bugs.
  */
-export function LinkButton({
-  className,
-  variant = "secondary",
-  size = "md",
-  ...props
-}: React.ComponentProps<"a"> & { variant?: ButtonVariant; size?: ButtonSize }) {
-  return (
-    <a
-      className={cn(BUTTON_BASE, variant !== "link" && BUTTON_SIZES[size], BUTTON_VARIANTS[variant], className)}
-      {...props}
-    />
-  );
-}
-
 export const buttonClasses = (variant: ButtonVariant = "secondary", size: ButtonSize = "md") =>
   cn(BUTTON_BASE, variant !== "link" && BUTTON_SIZES[size], BUTTON_VARIANTS[variant]);

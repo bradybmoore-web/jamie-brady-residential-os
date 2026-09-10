@@ -279,6 +279,13 @@ export class SupabaseStore implements DataStore {
   getTransaction(id: UUID) {
     return this.selectOne<Transaction>(TABLE.transactions, "id", id);
   }
+  async updateTransactionMilestone(id: UUID, label: string, complete: boolean) {
+    const transaction = await this.getTransaction(id);
+    if (!transaction) throw new Error(`Transaction ${id} not found`);
+    return this.update<Transaction>(TABLE.transactions, id, {
+      milestones: transaction.milestones.map((m) => (m.label === label ? { ...m, complete } : m)),
+    });
+  }
 
   listTasks() {
     return this.selectAll<Task>(TABLE.tasks, "due_at", true);

@@ -82,6 +82,21 @@ export async function dismissPriorityAction(input: {
     const { store, ownerId } = await actionContext();
     const now = new Date().toISOString();
 
+    // A transaction card is about one specific milestone — the next one due.
+    // Marking it done has to complete that milestone, or the card comes back.
+    if (input.priorityKey.startsWith("tx:")) {
+      const transactionId = input.priorityKey.split(":")[1];
+      const transaction = await store.getTransaction(transactionId);
+      if (transaction) {
+        const next = transaction.milestones
+          .filter((m) => !m.complete)
+          .sort((a, b) => a.dueAt.localeCompare(b.dueAt))[0];
+        if (next) {
+          await store.updateTransactionMilestone(transactionId, next.label, true);
+        }
+      }
+    }
+
     if (input.taskId) {
       await store.updateTask(input.taskId, { status: "done", completedAt: now });
     }

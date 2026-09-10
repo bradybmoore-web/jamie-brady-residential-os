@@ -6,7 +6,7 @@ import { EvidenceLedger } from "@/lib/ai/grounding";
 import { FACTS_RULE } from "@/lib/ai/prompts/writing";
 import { getStore } from "@/lib/data/store";
 import { getMlsProvider } from "@/lib/integrations/mls";
-import { daysBetween, formatCurrency, formatDate, teamDayAt } from "@/lib/utils";
+import { daysBetween, formatCurrency, teamDayAt } from "@/lib/utils";
 import type { SellerUpdate, SellerUpdateMarketContext, UUID } from "@/lib/types";
 
 export const SELLER_UPDATE_PROMPT_VERSION = "seller_update@2";
@@ -260,8 +260,4 @@ function median(values: number[]): number | null {
   const sorted = [...values].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
   return sorted.length % 2 === 0 ? Math.round((sorted[mid - 1] + sorted[mid]) / 2) : sorted[mid];
-}
-
-export function formatUpdatePeriod(update: SellerUpdate) {
-  return `${formatDate(update.periodStart)} – ${formatDate(update.periodEnd)}`;
 }

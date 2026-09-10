@@ -20,8 +20,4 @@ export async function getProvider(): Promise<AIProvider> {
   return cached;
 }
 
-export function __setProviderForTests(provider: AIProvider | null) {
-  cached = provider;
-}
-
 export * from "./provider";
