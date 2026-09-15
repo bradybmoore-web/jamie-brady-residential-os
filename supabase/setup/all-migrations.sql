@@ -1221,7 +1221,7 @@ immutable
 set search_path = public
 as $$
   -- Space, tab, newline, carriage return and U+00A0 non-breaking space.
-  select lower(translate(coalesce(addr, ''), E' \t\n\r ', ''));
+  select lower(translate(coalesce(addr, ''), E' \t\n\r\u00a0', ''));
 $$;
 
 revoke all on function public.normalise_email(text) from public, anon, authenticated;

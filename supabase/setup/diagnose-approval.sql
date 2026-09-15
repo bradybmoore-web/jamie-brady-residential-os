@@ -12,16 +12,17 @@
 -- 1. Every profile, with the reason an unapproved one did not match.
 -- Diagnose why a profile was not approved. Reveals no addresses.
 with prof as (
-  select p.email as raw,
+  select p.user_id,
+         p.email as raw,
          lower(btrim(p.email)) as norm,
-         lower(translate(p.email, E' \t\n\r ', '')) as squashed,
+         lower(translate(p.email, E' \t\n\r\u00a0', '')) as squashed,
          p.approved
   from public.profiles p
 ),
 al as (
   select a.email as raw,
          a.note,
-         lower(translate(a.email, E' \t\n\r ', '')) as squashed
+         lower(translate(a.email, E' \t\n\r\u00a0', '')) as squashed
   from public.allowed_team_emails a
 ),
 -- allowlist rows not already claimed by an approved profile
@@ -32,6 +33,7 @@ unclaimed as (
   )
 )
 select
+  p.user_id,
   case when p.approved then 'APPROVED' else 'NOT APPROVED' end as state,
   case
     when p.approved                              then 'OK - matches the allowlist exactly'
@@ -63,6 +65,6 @@ select note,
        email <> btrim(email)                  as has_edge_space,
        position(chr(160) in email) > 0        as has_nbsp,
        octet_length(email) <> length(email)   as has_non_ascii,
-       left(md5(lower(translate(email, E' \t\n\r ', ''))), 8) as fingerprint
+       left(md5(lower(translate(email, E' \t\n\r\u00a0', ''))), 8) as fingerprint
 from public.allowed_team_emails
 order by note;
