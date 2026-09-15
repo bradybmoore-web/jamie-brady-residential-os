@@ -10,7 +10,7 @@ Status legend: `[x]` done · `[~]` done with a mock/stub behind a real interface
 - [x] UI primitives (`components/ui`)
 - [x] Env validation (`lib/env.ts`)
 - [x] Domain types (`lib/types.ts`)
-- [x] Supabase schema migration (18 tables, UUID PKs, timestamps, source_system/source_id)
+- [x] Supabase schema migration (23 tables, UUID PKs, timestamps, source_system/source_id)
 - [x] Supabase RLS policies migration
 - [x] `DataStore` interface + `MemoryStore` + `SupabaseStore`
 - [x] Auth (Supabase Auth adapter + demo passcode fallback) + middleware route protection
@@ -47,7 +47,7 @@ Status legend: `[x]` done · `[~]` done with a mock/stub behind a real interface
 - [x] Contact cards with evidence + recommended outreach
 
 ## Phase 6 — AI Assistant
-- [x] Tool registry architecture (13 tools)
+- [x] Tool registry architecture (18 tools — 13 read, 5 write)
 - [x] Tool-calling loop in the orchestrator (provider-agnostic)
 - [x] Chat interface with tool-call transparency
 - [x] Action drafts routed to the approval queue
@@ -73,6 +73,18 @@ Status legend: `[x]` done · `[~]` done with a mock/stub behind a real interface
 - [x] Unit tests (vitest) for scoring, grounding, prompts, workflows — 99 tests
 - [x] Browser end-to-end smoke suite (`npm run test:e2e`) — 31 assertions
 - [x] `lint` + `typecheck` + `test` + production `build` all green (`npm run check`)
+
+## Security Phase 1 — pre-integration hardening
+- [x] Remove the hard-coded fallback session signing secret; fail closed in production
+- [x] Disable demo/passcode authentication entirely when Supabase Auth is configured
+- [x] Approved-team-member allowlist (`0003_approved_team_members.sql`, 24th table); RLS denies by default
+- [x] Column-level grants so a signed-in user cannot approve themselves
+- [x] MLS status derived from the implemented-provider registry, never from env vars
+- [x] Correct the `gmail.compose` documentation; no-send enforced in code and asserted by test
+- [x] Rate limiting for sign-in and `/api/assistant` behind a swappable store
+- [x] `/api/health` reduced to liveness only
+- [x] Demo-data banners and per-row markers on Today, Opportunities, Marketing, Approvals
+- [x] Security regression tests (`tests/security.test.ts`, `tests/rate-limit.test.ts`)
 
 ## Deferred (explicitly out of MVP scope)
 - [ ] Real outbound send (email/SMS transport)

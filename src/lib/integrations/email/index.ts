@@ -25,6 +25,9 @@ export function emailInfo(): AdapterInfo {
     mode: capabilities.google ? "live" : "mock",
     status: capabilities.google ? "connected" : "needs_setup",
     requires: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REFRESH_TOKEN"],
-    notes: "Read and draft only. This product never sends mail — drafts go to the approval queue and to your Gmail drafts folder.",
+    notes:
+      "Read and draft only. This product never sends mail: drafts go to the approval queue and to your " +
+      "Gmail drafts folder for you to send yourself. Note that the gmail.compose scope does technically " +
+      "permit sending — that restraint is enforced by this application's code, not by the OAuth grant.",
   };
 }

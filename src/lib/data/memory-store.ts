@@ -303,6 +303,15 @@ export class MemoryStore implements DataStore {
     return patchRow(d.integrations, existing.id, patch, "Integration");
   }
 
+  async hasSeedData(): Promise<boolean> {
+    const d = dataset();
+    return (
+      d.contacts.some((c) => c.isSeed) ||
+      d.listings.some((l) => l.isSeed) ||
+      d.leads.some((l) => l.isSeed)
+    );
+  }
+
   async listAuditLog(): Promise<AuditLogEntry[]> {
     return dataset().auditLog;
   }

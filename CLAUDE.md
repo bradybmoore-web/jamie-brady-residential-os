@@ -40,15 +40,31 @@ a placeholder.
 
 ## Things that must stay true
 
-- Nothing outbound is ever sent. `email_draft`, `text_draft` and `stage_change`
-  are constrained at the database level to require approval.
-- No screen may present mocked data as real. If an adapter is in mock mode, the
-  UI says so.
-- Never scrape MLS data. The interface is licensed-feed shaped; the mock stays
-  a mock until a licence exists.
-- Seed rows carry `isSeed: true` and render a "Demo" marker.
-- Nothing bypasses `DataStore` or `AIProvider` to reach Supabase or Anthropic
-  directly.
+These are security properties, not preferences. `tests/security.test.ts` fails
+if any of them regress — do not weaken a test to make a change pass.
+
+- **Nothing outbound is ever sent.** `email_draft`, `text_draft` and
+  `stage_change` are constrained at the database level to require approval. No
+  send code path may exist. Note that the `gmail.compose` scope *does* permit
+  sending — the restraint is ours, in code, not the OAuth grant's.
+- **No default session signing key.** Production fails closed without
+  `SESSION_SECRET`. A checked-in default is a published credential.
+- **Demo auth is off whenever Supabase Auth is configured** — at every layer,
+  with no fallback from a failed Supabase session to a demo cookie.
+- **Authorization is deny-by-default.** Signing up grants nothing;
+  `profiles.approved` plus the allowlist does. A user can never approve
+  themselves.
+- **No screen may present mocked data as real.** Status comes from the provider
+  actually serving the request (`mlsMode()`), never from the presence of
+  environment variables.
+- **Never scrape MLS data.** The interface is licensed-feed shaped; the mock
+  stays a mock until a licence exists.
+- **Seed rows carry `isSeed: true`** and render a "Demo" marker or banner on
+  every screen that shows them.
+- **Nothing bypasses `DataStore` or `AIProvider`** to reach Supabase or
+  Anthropic directly.
+- **`/api/health` stays a liveness probe.** No integration status, no
+  configuration detail — it is public.
 
 ## Before finishing
 

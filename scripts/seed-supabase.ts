@@ -10,6 +10,10 @@
  * agent and remaps every owner reference in the dataset onto the real profile
  * ids. Re-running it is safe: rows are upserted by id.
  *
+ * It also seeds `allowed_team_emails` with the two agent addresses and approves
+ * their profiles. Nobody else who signs up gets access — see migration
+ * 0003_approved_team_members.sql.
+ *
  * Every row it writes is marked `is_seed = true`, so you can remove all of it
  * later with `delete from <table> where is_seed;`.
  */
@@ -38,6 +42,7 @@ async function main() {
   const dataset = buildSeedDataset();
   console.log(`Seeding ${url}\n`);
 
+  await seedAllowlist(supabase, dataset);
   const profileIdBySeedId = await seedProfiles(supabase, dataset);
   remapOwners(dataset, profileIdBySeedId);
 
@@ -64,7 +69,26 @@ async function main() {
   await upsert("marketing_assets", dataset.marketingAssets);
   await upsert("integration_connections", dataset.integrations);
 
-  console.log("\nDone. Sign in with either agent's email and the password you set below.");
+  console.log("\nDone. Sign in with either agent's email and the temporary password printed above.");
+  console.log(
+    "Only the two allowlisted addresses have access. Anyone else who signs up gets an\n" +
+      "unapproved profile and can read nothing. To add someone later, run:\n" +
+      "  select public.approve_team_member('person@example.com');",
+  );
+}
+
+/**
+ * The allowlist has to exist before the auth users, because `handle_new_user`
+ * reads it to decide whether a new profile is approved.
+ */
+async function seedAllowlist(client: SupabaseClient, dataset: Dataset) {
+  const rows = dataset.profiles.map((p) => ({
+    email: p.email.toLowerCase(),
+    note: "Seeded team member",
+  }));
+  const { error } = await client.from("allowed_team_emails").upsert(rows, { onConflict: "email" });
+  if (error) throw new Error(`Could not seed the team allowlist: ${error.message}`);
+  console.log(`  allowlist                ${rows.map((r) => r.email).join(", ")}`);
 }
 
 /**
@@ -83,8 +107,12 @@ async function seedProfiles(client: SupabaseClient, dataset: Dataset) {
       .maybeSingle();
 
     if (existing) {
+      await client
+        .from("profiles")
+        .update({ approved: true, approved_at: new Date().toISOString() })
+        .eq("id", existing.id);
       map.set(profile.id, existing.id as string);
-      console.log(`  profile  ${profile.email} (existing)`);
+      console.log(`  profile  ${profile.email} (existing, approved)`);
       continue;
     }
 
@@ -111,9 +139,18 @@ async function seedProfiles(client: SupabaseClient, dataset: Dataset) {
       );
     }
 
+    // Written with the service role, which bypasses both RLS and the
+    // column-level grants that stop a signed-in user approving themselves.
     await client
       .from("profiles")
-      .update({ full_name: profile.fullName, title: profile.title, phone: profile.phone, role: profile.role })
+      .update({
+        full_name: profile.fullName,
+        title: profile.title,
+        phone: profile.phone,
+        role: profile.role,
+        approved: true,
+        approved_at: new Date().toISOString(),
+      })
       .eq("id", row.id);
 
     map.set(profile.id, row.id as string);

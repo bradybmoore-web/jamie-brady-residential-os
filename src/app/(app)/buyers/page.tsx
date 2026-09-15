@@ -3,7 +3,6 @@ import Link from "next/link";
 import { requireSession } from "@/lib/auth/session";
 import { getStore } from "@/lib/data/store";
 import { getMlsProvider } from "@/lib/integrations/mls";
-import { capabilities } from "@/lib/env";
 import {
   Badge,
   Card,
@@ -27,6 +26,7 @@ export default async function BuyersPage() {
   const [buyers, contacts] = await Promise.all([store.listBuyers(), store.listContacts()]);
   const contactById = new Map(contacts.map((c) => [c.id, c]));
   const mls = await getMlsProvider();
+  const usingMockMls = mls.mode === "mock";
 
   // Fit scoring runs against the MLS adapter, so it lights up for real the day a
   // licensed feed is connected — the code path is identical.
@@ -47,7 +47,7 @@ export default async function BuyersPage() {
         <PageTitle className="mt-1.5">Buyers</PageTitle>
         <p className="mt-1.5 max-w-2xl text-[13.5px] leading-relaxed text-ink-muted">
           What each buyer actually needs, in enough detail to score a listing against it. The matching below runs
-          through the MLS adapter — {capabilities.mls ? "live data" : "currently a local mock feed"}.
+          through the MLS adapter — {usingMockMls ? "currently a local mock feed, not licensed data" : "live licensed data"}.
         </p>
       </header>
 
@@ -105,7 +105,7 @@ export default async function BuyersPage() {
 
                 <div className="border-t border-line pt-3">
                   <div className="eyebrow">
-                    Inventory fit {capabilities.mls ? "" : "(mock feed)"}
+                    Inventory fit {usingMockMls ? "(mock feed — not real listings)" : ""}
                   </div>
                   {matches.length === 0 ? (
                     <p className="mt-1 text-[12.5px] text-ink-muted">

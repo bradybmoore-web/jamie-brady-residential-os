@@ -71,8 +71,9 @@ and property engagement, closing anniversaries, and active clients who have gone
 quiet, weighted by what kind of relationship it is.
 
 ### AI Assistant
-A tool-calling interface over the real book of business. Sixteen tools, all
-reading through the same data layer the pages use. It shows what it looked at.
+A tool-calling interface over the real book of business. Eighteen tools (13
+read, 5 write), all going through the same data layer the pages use. It shows
+what it looked at.
 
 ### Approvals
 Everything outbound waits here. The system may read, summarise, prioritise,
@@ -101,7 +102,7 @@ Next.js 16 (App Router, React 19, TypeScript)
 ├── lib/scoring/…            Deterministic ranking. No model involved.
 ├── lib/workflows/…          Six named workflows, one orchestration layer.
 ├── lib/integrations/…       One adapter per vendor: interface + mock + real.
-└── supabase/migrations/     18 tables, RLS policies, triggers.
+└── supabase/migrations/     24 tables, RLS policies, triggers.
 ```
 
 ### The two ideas the whole thing rests on
@@ -164,7 +165,7 @@ in the interface.
 ```bash
 npm run lint       # eslint, zero warnings tolerated
 npm run typecheck  # tsc --noEmit
-npm run test       # vitest — 99 unit and integration tests
+npm run test       # vitest — unit, integration and security tests
 npm run build      # production build
 npm run check      # all four, in order
 
@@ -228,16 +229,55 @@ missing and the steps to obtain them.
 5. Restart. The app detects Supabase, switches to `SupabaseStore`, and swaps the
    login screen for Supabase Auth.
 
+### Authorizing team members
+
+**Signing up does not grant access.** `profiles.approved` defaults to false, and
+`is_team_member()` — which every row policy calls — requires it to be true. An
+unapproved account can read exactly nothing, and the app refuses the session
+outright rather than rendering an empty screen.
+
+Approval comes from an explicit allowlist:
+
+```sql
+-- Before Jamie and Brady sign up:
+insert into public.allowed_team_emails (email) values
+  ('jamie@example.com'),
+  ('brady@example.com');
+
+-- Or, to approve someone who has already signed up:
+select public.approve_team_member('newperson@example.com');
+
+-- To remove access:
+select public.revoke_team_member('formerperson@example.com');
+```
+
+`npm run db:seed` seeds the allowlist with the two agent addresses for you.
+
+A signed-in user **cannot approve themselves**. `authenticated` has no column
+privilege on `approved`, `approved_at`, `approved_by`, `user_id` or `email`, and
+the insert policy independently rejects a self-inserted approved row. Both
+`approve_team_member` and `revoke_team_member` are revoked from `anon` and
+`authenticated`, so they require the service role or SQL editor.
+
+You should still disable public signup in the Supabase dashboard
+(Authentication → Providers). The allowlist means an unwanted signup grants
+nothing, but there is no reason to accept one at all.
+
 ### Row level security
 
-Policy model: **any authenticated user with a profile row can read and write.**
-This is a two-person brokerage where both agents are trusted with the whole book
-of business, and the brief explicitly asks not to build complicated permissions.
+Beyond the approval gate, the policy model is **any approved team member can
+read and write**. This is a two-person brokerage where both agents are trusted
+with the whole book of business, and the brief asks not to build complicated
+permissions.
 
 Ownership is still recorded on every row (`owner_id`, `assigned_to`), so tighter
 per-record policies can be layered on later without a schema change. `audit_log`
 has insert and select policies but no update or delete policy, which makes it
 append-only for every authenticated role.
+
+> One consequence worth deciding on deliberately: once Gmail is connected, both
+> agents can read everything in `email_events_cache`, including the other's
+> client correspondence.
 
 ---
 
@@ -279,9 +319,21 @@ One OAuth client covers Gmail and Calendar.
 5. Store the refresh token as `GOOGLE_REFRESH_TOKEN`, alongside the client id
    and secret.
 
-The scope is `gmail.compose`, not `gmail.send` — deliberately. `gmail.compose`
-creates drafts. The application is not capable of sending mail even if a future
-change tried to.
+**Do not mistake the scope for a safety control.** Google documents
+`gmail.compose` as *"Manage drafts and send emails"* — it **does** permit
+sending. An earlier version of this README claimed otherwise; that was wrong.
+
+The guarantee that this product never sends mail is enforced in **code**:
+
+- the Gmail adapter has no send method, and its only write is `POST /drafts`;
+- the `EmailAdapter` interface has no send operation, so no replacement adapter
+  can introduce one;
+- outbound `ai_actions` are constrained in Postgres to require approval;
+- a test asserts that no Gmail send endpoint or send scope appears anywhere in
+  the source tree.
+
+If sending is ever wanted it should be a separate, explicitly reviewed feature
+with its own consent step — never a side effect of this adapter.
 
 Tokens are exchanged server-side per request in `lib/integrations/google-auth.ts`
 and cached in memory until expiry. No token reaches the browser.
@@ -334,6 +386,12 @@ data to function.**
 inventory behind it. Comparables in seller updates and listing-fit scoring for
 buyers both run through it today, on mock data, clearly labelled.
 
+Setting the `MLS_*` variables is **not** sufficient to make data live, and
+deliberately so: status is derived from the `LIVE_PROVIDERS` registry of
+*implemented* providers, never from configuration. Configuring credentials
+without an implementation logs a warning and keeps serving — and labelling — the
+mock feed.
+
 To go live:
 
 1. Apply for a data licence through Unlock MLS for the Moore Residential Group
@@ -341,8 +399,8 @@ To go live:
 2. Choose an approved RESO Web API distributor: **MLS Grid**, **Trestle**, or
    **Bridge Interactive**.
 3. Implement `MlsProvider` against that feed (e.g. `mls/mlsgrid.ts`).
-4. Set `MLS_PROVIDER`, `MLS_API_URL`, `MLS_API_KEY` and register the provider in
-   `getMlsProvider()`.
+4. Register it in `LIVE_PROVIDERS` and set `MLS_PROVIDER`, `MLS_API_URL`,
+   `MLS_API_KEY`. Every status indicator in the product flips at that moment.
 
 No caller changes. Seller updates and buyer matching light up with real data the
 same day.
@@ -367,8 +425,9 @@ for anything reachable from the internet:
 demo passcode is a shared gate for demonstrations, not authentication.
 
 The middleware protects every route except `/login` and `/api/health`.
-`/api/health` reports liveness and which capabilities are live — booleans only,
-never a key or a URL.
+`/api/health` reports liveness only — no integration status, because that tells
+an unauthenticated visitor whether real client data is behind the deployment.
+The same information is on Settings → Integrations for signed-in members.
 
 ---
 
@@ -376,7 +435,18 @@ never a key or a URL.
 
 - **Authentication** on every route via middleware, with real verification
   server-side on each request (the middleware only redirects).
-- **Row level security** on all 22 tables. The service role key is used only by
+- **Fail-closed session signing.** There is no default signing key. In
+  production a missing `SESSION_SECRET` disables sign-in rather than falling
+  back to something guessable; outside production a random per-process key is
+  used, so sessions simply do not survive a restart.
+- **One way in.** When Supabase Auth is configured, demo/passcode
+  authentication is disabled at four independent layers — the session resolver,
+  the cookie decoder, the passcode verifier and the middleware — and a stale
+  demo cookie is cleared from the browser.
+- **Rate limiting** on sign-in (per address and per identifier) and on
+  `/api/assistant` (per profile).
+- **Deny-by-default authorization.** See "Authorizing team members" above.
+- **Row level security** on all 24 tables. The service role key is used only by
   the seed script and never in a request path.
 - **Server-side secrets only.** `lib/env.ts` is marked `server-only`; the only
   values that reach the browser are the two `NEXT_PUBLIC_` Supabase values.
@@ -384,7 +454,7 @@ never a key or a URL.
   `secure` in production.
 - **Append-only audit log.** Every mutation writes an `audit_log` row with actor,
   action, entity and metadata. No update or delete policy exists on that table.
-- **The AI cannot send.** No send scope is ever requested; drafts go to a queue.
+- **The AI cannot send.** No send code path exists, and a test enforces it. Drafts go to an approval queue. (Note the `gmail.compose` scope itself permits sending — the restraint is in the code, not the grant.)
 - **Fair housing** rules are in the shared writing guidelines, and copy is
   screened against a banned-phrase list plus per-seller prohibitions.
 
@@ -400,7 +470,8 @@ Stated plainly, because a demo that pretends otherwise wastes everyone's time.
 2. **Without an Anthropic key, all AI language is templated.** The templates are
    built from real record data and are genuinely usable, but they are not what
    the product does with Claude connected.
-3. **The demo passcode is not authentication.** It is a shared gate. Connect
+3. **The demo passcode is not authentication.** It is a shared gate, and it is
+   disabled automatically the moment Supabase Auth is configured. Connect
    Supabase Auth before real client data.
 4. **The Cloze REST adapter is unverified** against a live tenant — see
    [Connecting Cloze](#connecting-cloze).
@@ -416,6 +487,13 @@ Stated plainly, because a demo that pretends otherwise wastes everyone's time.
    designed for a real screen.
 9. **`MemoryStore` is single-process.** Fine for one or two people on one server;
    it is not a substitute for the database.
+10. **Rate limiting is in-process.** Limits are per instance and reset on
+    deploy. Swap in a durable `RateLimitStore` before running more than one
+    instance.
+11. **Google OAuth is not built yet.** There is no callback route and no token
+    storage; the adapter reads a single refresh token from the environment,
+    which would make both agents act as one Google identity. This is the next
+    piece of work and is deliberately not started.
 
 ---
 
@@ -464,9 +542,9 @@ src/
     integrations/   cloze, email, calendar, mls, activepipe, registry
     scoring/        Deterministic ranking engines
     workflows/      The six named workflows
-supabase/migrations/  Schema and RLS
+supabase/migrations/  Schema, RLS, and the approved-member allowlist
 scripts/              Supabase seed loader
-tests/                99 unit and integration tests, plus tests/e2e/ browser smoke
+tests/                unit, integration and security tests, plus tests/e2e/ browser smoke
 ```
 
 `IMPLEMENTATION_NOTES.md` records the architectural decisions and the

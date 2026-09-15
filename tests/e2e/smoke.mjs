@@ -141,6 +141,28 @@ const shownAfter = await page.locator("text=/\\d+ shown/").innerText();
 ok("the opportunity filter narrows the list", shownBefore !== shownAfter, `${shownBefore} -> ${shownAfter}`);
 await page.selectOption("#filter", "all");
 
+/* ---------------------------------------------------------------- security */
+
+// Demo data must be unmistakable on the screens that aggregate records rather
+// than listing them one by one.
+for (const [path, label] of [
+  ["/today", "Today"],
+  ["/opportunities", "Opportunities"],
+  ["/marketing", "Marketing"],
+  ["/approvals", "Approvals"],
+]) {
+  await page.goto(`${BASE}${path}`, { waitUntil: "networkidle" });
+  const banner = page.getByText("This is demo data.", { exact: false }).first();
+  ok(`demo-data banner is visible on ${label}`, await banner.isVisible().catch(() => false));
+}
+
+// The public health endpoint must not disclose integration status.
+const health = await page.evaluate(async (base) => {
+  const response = await fetch(`${base}/api/health`);
+  return response.json();
+}, BASE);
+ok("health endpoint exposes only liveness", Object.keys(health).sort().join(",") === "status,timestamp", JSON.stringify(health));
+
 /* ------------------------------------------------------ navigation + mobile */
 
 for (const label of [

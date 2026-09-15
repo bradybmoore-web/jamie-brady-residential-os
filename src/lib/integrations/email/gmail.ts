@@ -14,10 +14,27 @@ const API = "https://gmail.googleapis.com/gmail/v1/users/me";
 /**
  * Gmail adapter.
  *
- * Scopes required: `gmail.readonly` and `gmail.compose`. Note that
- * `gmail.compose` allows creating drafts — it is deliberately *not*
- * `gmail.send`, so this application cannot send mail even if a future change
- * tried to.
+ * Scopes required: `gmail.readonly` and `gmail.compose`.
+ *
+ * IMPORTANT — do not mistake the scope for a safety control. Google documents
+ * `gmail.compose` as "Manage drafts and send emails": it DOES permit sending.
+ * An earlier version of this comment claimed otherwise, which was wrong and
+ * dangerously reassuring.
+ *
+ * The guarantee that this product never sends mail is therefore enforced by
+ * *code*, not by the OAuth grant:
+ *
+ *   * This adapter exposes no send method. The only write it performs is
+ *     POST /drafts.
+ *   * `EmailAdapter` has no send operation to implement, so no adapter can be
+ *     swapped in that sends.
+ *   * Outbound `ai_actions` are constrained in Postgres to require approval.
+ *   * A test asserts that no Gmail send endpoint or send scope appears anywhere
+ *     in the source tree.
+ *
+ * Any change that adds a send path has to defeat all four deliberately. If
+ * sending is ever wanted, it should be a separate, explicitly reviewed feature
+ * with its own consent step — not a side effect of this adapter.
  *
  * TODO(credentials): needs a Google Cloud project with the Gmail API enabled
  * and a refresh token for jamie@. See README → "Connecting Google".

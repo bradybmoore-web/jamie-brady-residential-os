@@ -12,6 +12,7 @@ import {
   CardTitle,
   EmptyState,
   Input,
+  SeedMarker,
   Textarea,
 } from "@/components/ui/primitives";
 import { ConfidenceMeter } from "@/components/ui/confidence";
@@ -34,7 +35,14 @@ const TYPE_LABELS: Record<AIAction["type"], string> = {
   note: "Note",
 };
 
-export function ApprovalQueue({ items }: { items: AIAction[] }) {
+export function ApprovalQueue({
+  items,
+  demoActionIds,
+}: {
+  items: AIAction[];
+  /** Ids whose underlying lead or contact is fictional seed data. */
+  demoActionIds: Set<string>;
+}) {
   if (items.length === 0) {
     return (
       <Card>
@@ -48,13 +56,13 @@ export function ApprovalQueue({ items }: { items: AIAction[] }) {
   return (
     <div className="flex flex-col gap-3">
       {items.map((item) => (
-        <ApprovalCard key={item.id} item={item} />
+        <ApprovalCard key={item.id} item={item} isDemo={demoActionIds.has(item.id)} />
       ))}
     </div>
   );
 }
 
-function ApprovalCard({ item }: { item: AIAction }) {
+function ApprovalCard({ item, isDemo }: { item: AIAction; isDemo: boolean }) {
   const [status, setStatus] = useState(item.status);
   const [subject, setSubject] = useState(item.subject ?? "");
   const [body, setBody] = useState(item.body);
@@ -80,6 +88,7 @@ function ApprovalCard({ item }: { item: AIAction }) {
           <div className="flex flex-wrap items-center gap-2">
             <CardTitle>{item.title}</CardTitle>
             <Badge tone="outline">{TYPE_LABELS[item.type]}</Badge>
+            {isDemo ? <SeedMarker /> : null}
             <Badge
               tone={
                 status === "executed"

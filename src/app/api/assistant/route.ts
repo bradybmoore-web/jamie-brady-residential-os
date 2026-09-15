@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
+import { RATE_LIMITS, checkRateLimit, describeRetry } from "@/lib/security/rate-limit";
 import { runAssistant, type AssistantTurn } from "@/lib/workflows/assistant";
 
 export const dynamic = "force-dynamic";
@@ -16,6 +17,20 @@ export async function POST(request: Request) {
   const session = await getSession();
   if (!session) {
     return NextResponse.json({ error: "Not authenticated." }, { status: 401 });
+  }
+
+  // Keyed on the authenticated profile rather than the client address: each
+  // turn can fan out into several tool calls and a metered model request, so
+  // the cost belongs to whoever is signed in.
+  const limit = await checkRateLimit(`assistant:${session.profileId}`, RATE_LIMITS.assistant);
+  if (!limit.allowed) {
+    return NextResponse.json(
+      { error: `You have reached the assistant limit. Try again in ${describeRetry(limit.retryAfterMs)}.` },
+      {
+        status: 429,
+        headers: { "Retry-After": String(Math.ceil(limit.retryAfterMs / 1000)) },
+      },
+    );
   }
 
   let body: unknown;

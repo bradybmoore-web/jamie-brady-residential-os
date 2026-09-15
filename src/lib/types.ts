@@ -703,6 +703,14 @@ export interface Profile extends BaseRecord {
   title?: string | null;
   phone?: string | null;
   licenseNumber?: string | null;
+  /**
+   * Explicit authorization. Signing up does not grant access — an approved
+   * profile does. Enforced in Postgres by `is_team_member()` and again here so
+   * an unapproved user gets a clear refusal rather than an empty application.
+   */
+  approved: boolean;
+  approvedAt?: ISODate | null;
+  approvedBy?: UUID | null;
 }
 
 /* --------------------------------------------------------------- audit log */

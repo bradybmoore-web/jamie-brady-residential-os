@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { requireSession } from "@/lib/auth/session";
 import { getStore } from "@/lib/data/store";
-import { capabilities } from "@/lib/env";
+import { mlsIsMock } from "@/lib/integrations/mls";
 import { buildContext } from "@/lib/scoring/context";
 import { buildListingActions } from "@/lib/scoring/priorities";
 import { SellerUpdatePanel } from "@/components/listings/seller-update-panel";
@@ -128,7 +128,7 @@ export default async function ListingDetailPage({ params }: { params: Promise<{ 
 
       <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
         <div className="flex flex-col gap-6">
-          <SellerUpdatePanel listingId={listing.id} updates={updates} mlsIsMock={!capabilities.mls} />
+          <SellerUpdatePanel listingId={listing.id} updates={updates} mlsIsMock={mlsIsMock()} />
 
           <Card>
             <CardHeader>

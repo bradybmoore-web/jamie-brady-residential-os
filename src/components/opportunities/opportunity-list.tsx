@@ -8,6 +8,7 @@ import {
   Button,
   Card,
   EmptyState,
+  SeedMarker,
   Select,
   UrgencyDot,
   buttonClasses,
@@ -134,6 +135,7 @@ export function OpportunityList({ rows: initialRows }: { rows: OpportunityRow[] 
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="text-[14.5px] font-semibold text-ink">{opportunity.title}</h3>
+                      {contact?.isSeed ? <SeedMarker /> : null}
                       <Badge tone={opportunity.urgency === "critical" ? "urgent" : opportunity.urgency === "high" ? "warn" : "neutral"}>
                         <UrgencyDot urgency={opportunity.urgency} />
                         {opportunity.urgency}

@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { Check, ChevronDown, Mail, Plus, User } from "lucide-react";
-import { Badge, Button, Card, UrgencyDot, buttonClasses } from "@/components/ui/primitives";
+import { Badge, Button, Card, SeedMarker, UrgencyDot, buttonClasses } from "@/components/ui/primitives";
 import { createTaskAction, dismissPriorityAction } from "@/app/actions/tasks";
 import { CHANNEL_LABELS, type Priority } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -22,7 +22,16 @@ const URGENCY_TONE = {
  * reason to trust the ranking. The suggested opener is right there because the
  * hardest part of the call is the first sentence.
  */
-export function PriorityCard({ priority, rank }: { priority: Priority; rank: number }) {
+export function PriorityCard({
+  priority,
+  rank,
+  isDemo = false,
+}: {
+  priority: Priority;
+  rank: number;
+  /** True when the record behind this card is fictional seed data. */
+  isDemo?: boolean;
+}) {
   const [expanded, setExpanded] = useState(false);
   const [done, setDone] = useState(false);
   const [note, setNote] = useState<string | null>(null);
@@ -80,6 +89,7 @@ export function PriorityCard({ priority, rank }: { priority: Priority; rank: num
             {priority.relationship ? (
               <span className="text-[12px] text-ink-faint">{priority.relationship}</span>
             ) : null}
+            {isDemo ? <SeedMarker /> : null}
           </div>
 
           <p className="mt-1.5 text-[13.5px] leading-relaxed text-ink-muted">{priority.reason}</p>

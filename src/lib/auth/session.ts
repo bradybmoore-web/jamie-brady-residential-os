@@ -1,9 +1,9 @@
 import "server-only";
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
-import { capabilities, env } from "@/lib/env";
+import { env } from "@/lib/env";
 import { getStore } from "@/lib/data/store";
-import { SESSION_COOKIE } from "./constants";
+import { SESSION_COOKIE, isSupabaseAuthConfigured } from "./constants";
 import type { Profile } from "@/lib/types";
 
 export { SESSION_COOKIE } from "./constants";
@@ -22,19 +22,61 @@ export interface Session {
  * The demo session is a signed cookie, not a password store.
  *
  * It exists so the product is usable before a Supabase project is provisioned.
- * It is a shared passcode gate, and the README says so plainly — it is not a
- * substitute for real authentication and must not be used with real client data.
+ * It is a shared passcode gate — not a substitute for real authentication, and
+ * not for use with real client data.
  */
-function signingKey() {
-  // A per-deployment secret is required in production; see `assertProductionSafety`.
-  return env.sessionSecret ?? "residential-os-development-only-secret";
+
+export class SessionSecretMissingError extends Error {
+  constructor() {
+    super(
+      "SESSION_SECRET is not set. It is required whenever demo authentication is active in production. " +
+        "Generate one with `openssl rand -base64 32`, or connect Supabase Auth.",
+    );
+    this.name = "SessionSecretMissingError";
+  }
+}
+
+/**
+ * A random key generated once per process, used only outside production.
+ *
+ * There is deliberately no hard-coded default. A checked-in default key is a
+ * published credential: anyone reading the repository could forge a session for
+ * any profile. An ephemeral random key keeps local development frictionless
+ * (sign in, work, cookies simply do not survive a restart) while making a
+ * forged cookie impossible for someone who has only seen the source.
+ */
+let developmentKeyCache: string | null = null;
+
+function developmentKey(): string {
+  if (!developmentKeyCache) {
+    developmentKeyCache = randomBytes(32).toString("base64url");
+    console.warn(
+      "[auth] SESSION_SECRET is not set. Using a random per-process key for development. " +
+        "Sessions will not survive a restart, and this configuration is refused in production.",
+    );
+  }
+  return developmentKeyCache;
+}
+
+function signingKey(): string {
+  if (env.sessionSecret) return env.sessionSecret;
+  // Fail closed. Never sign or verify a production cookie with a guessable key.
+  if (process.env.NODE_ENV === "production") throw new SessionSecretMissingError();
+  return developmentKey();
 }
 
 function sign(payload: string) {
   return createHmac("sha256", signingKey()).update(payload).digest("base64url");
 }
 
+export function demoAuthEnabled(): boolean {
+  return !isSupabaseAuthConfigured();
+}
+
 export function encodeDemoSession(profile: Profile) {
+  if (!demoAuthEnabled()) {
+    throw new Error("Demo sessions are disabled because Supabase Auth is configured.");
+  }
   const payload = Buffer.from(
     JSON.stringify({ profileId: profile.id, fullName: profile.fullName, email: profile.email }),
   ).toString("base64url");
@@ -42,6 +84,7 @@ export function encodeDemoSession(profile: Profile) {
 }
 
 function decodeDemoSession(token: string): Session | null {
+  if (!demoAuthEnabled()) return null;
   const [payload, signature] = token.split(".");
   if (!payload || !signature) return null;
   const expected = sign(payload);
@@ -64,23 +107,41 @@ function decodeDemoSession(token: string): Session | null {
 }
 
 export function verifyDemoPasscode(input: string) {
-  const expected = env.demoPasscode;
-  const a = Buffer.from(input);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length) return false;
+  if (!demoAuthEnabled()) return false;
+  // Hash both sides to a fixed width before comparing. Comparing the raw
+  // buffers requires an early length check, which leaks the passcode length.
+  const key = signingKey();
+  const a = createHmac("sha256", key).update(input).digest();
+  const b = createHmac("sha256", key).update(env.demoPasscode).digest();
   return timingSafeEqual(a, b);
 }
 
 /* ------------------------------------------------------------- resolution */
 
 export async function getSession(): Promise<Session | null> {
-  if (capabilities.supabase) {
-    const supabaseSession = await getSupabaseSession();
-    if (supabaseSession) return supabaseSession;
+  // When Supabase Auth is configured it is the ONLY way in. There is no
+  // fallback to the demo cookie: a failed or absent Supabase session must not
+  // be rescued by a passcode cookie, or connecting Supabase would leave the
+  // demo path open as a backdoor.
+  if (isSupabaseAuthConfigured()) {
+    return getSupabaseSession();
   }
+
   const cookieStore = await cookies();
   const token = cookieStore.get(SESSION_COOKIE)?.value;
-  return token ? decodeDemoSession(token) : null;
+  if (!token) return null;
+
+  try {
+    return decodeDemoSession(token);
+  } catch (error) {
+    // A missing signing secret in production must deny access, not crash into
+    // an unauthenticated-but-rendered state.
+    if (error instanceof SessionSecretMissingError) {
+      console.error("[auth]", error.message);
+      return null;
+    }
+    throw error;
+  }
 }
 
 async function getSupabaseSession(): Promise<Session | null> {
@@ -91,10 +152,13 @@ async function getSupabaseSession(): Promise<Session | null> {
     if (error || !data.user) return null;
     const { data: profile } = await supabase
       .from("profiles")
-      .select("id, full_name, email")
+      .select("id, full_name, email, approved")
       .eq("user_id", data.user.id)
       .maybeSingle();
-    if (!profile) return null;
+    // No profile, or an unapproved one, is not a session. Row level security
+    // would deny every query anyway; refusing here turns a confusingly empty
+    // app into an honest "you do not have access".
+    if (!profile || profile.approved !== true) return null;
     return {
       profileId: profile.id as string,
       fullName: (profile.full_name as string) ?? "Team member",
@@ -120,15 +184,20 @@ export async function listLoginProfiles(): Promise<Profile[]> {
 }
 
 /**
- * Refuse to run a production deployment on the demo passcode with a default
- * signing secret. Called from the login page rather than at module load so a
- * misconfiguration surfaces as a clear message instead of a build failure.
+ * The banner shown on the login screen. Surfaced there rather than thrown at
+ * module load so a misconfiguration reads as a clear message instead of an
+ * opaque build failure.
  */
 export function demoAuthWarning(): string | null {
-  if (capabilities.supabase) return null;
+  if (isSupabaseAuthConfigured()) return null;
   if (process.env.NODE_ENV !== "production") return null;
   if (env.sessionSecret) {
     return "Running on shared-passcode demo authentication. Connect Supabase Auth before putting real client data in this deployment.";
   }
-  return "Demo authentication is active and SESSION_SECRET is not set. Set SESSION_SECRET, and connect Supabase Auth before putting real client data in this deployment.";
+  return "Sign-in is disabled: SESSION_SECRET is not set and this is a production build. Set SESSION_SECRET, then connect Supabase Auth before putting real client data in this deployment.";
+}
+
+/** True when sign-in cannot work at all because of missing configuration. */
+export function demoAuthBlocked(): boolean {
+  return demoAuthEnabled() && process.env.NODE_ENV === "production" && !env.sessionSecret;
 }

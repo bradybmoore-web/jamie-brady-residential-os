@@ -52,7 +52,12 @@ export const capabilities = {
   google: Boolean(env.googleClientId && env.googleClientSecret && env.googleRefreshToken),
   activepipe: Boolean(env.activepipeApiKey),
   zapier: Boolean(env.zapierMcpUrl),
-  mls: env.mlsProvider !== "mock" && Boolean(env.mlsApiUrl && env.mlsApiKey),
+  /**
+   * MLS *credentials are present*. This does NOT mean MLS data is live — a
+   * provider implementation must also exist. Use `mlsMode()` from
+   * `lib/integrations/mls` for anything user-facing.
+   */
+  mlsConfigured: env.mlsProvider !== "mock" && Boolean(env.mlsApiUrl && env.mlsApiKey),
   docusign: Boolean(env.docusignIntegrationKey),
 } as const;
 
@@ -62,7 +67,7 @@ export type CapabilityName = keyof typeof capabilities;
  * Warnings shown on the Integrations page. Missing credentials are not errors —
  * they are a checklist.
  */
-export function environmentReport() {
+export function environmentReport(mlsIsLive: boolean) {
   const notes: { key: string; ok: boolean; detail: string }[] = [
     {
       key: "Supabase",
@@ -90,10 +95,12 @@ export function environmentReport() {
     },
     {
       key: "MLS",
-      ok: capabilities.mls,
-      detail: capabilities.mls
+      ok: mlsIsLive,
+      detail: mlsIsLive
         ? `Connected via ${env.mlsProvider}.`
-        : "Mock provider. Requires a licensed RESO Web API feed.",
+        : capabilities.mlsConfigured
+          ? `MLS_PROVIDER="${env.mlsProvider}" is configured but no implementation is registered, so the mock feed is still in use.`
+          : "Mock provider. Requires a licensed RESO Web API feed.",
     },
   ];
   return notes;

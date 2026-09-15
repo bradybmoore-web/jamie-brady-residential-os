@@ -6,7 +6,8 @@ import { requireSession } from "@/lib/auth/session";
 import { getStore } from "@/lib/data/store";
 import { capabilities } from "@/lib/env";
 import { MarketingStudio } from "@/components/marketing/studio";
-import { PageTitle } from "@/components/ui/primitives";
+import { PageTitle, SeedMarker } from "@/components/ui/primitives";
+import { DemoDataBanner } from "@/components/ui/demo-banner";
 import { MARKETING_KIND_LABELS, type MarketingAssetKind } from "@/lib/types";
 import { formatCurrency } from "@/lib/utils";
 
@@ -55,7 +56,10 @@ export default async function ListingStudioPage({
       <header className="mt-4 flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="eyebrow">Listing Studio</p>
-          <PageTitle className="mt-1.5">{property?.address}</PageTitle>
+          <PageTitle className="mt-1.5">
+            {property?.address}
+            {listing.isSeed ? <SeedMarker className="ml-2 align-middle" /> : null}
+          </PageTitle>
           <p className="mt-1.5 text-[13.5px] text-ink-muted">
             {property?.neighborhood ?? property?.city} · {formatCurrency(listing.listPrice)} ·{" "}
             <Link href={`/listings/${listing.id}`} className="text-brass hover:underline">
@@ -64,6 +68,11 @@ export default async function ListingStudioPage({
           </p>
         </div>
       </header>
+
+      <DemoDataBanner
+        present={Boolean(listing.isSeed)}
+        context="This is a fictional property. Anything generated here is for demonstration only."
+      />
 
       <div className="mt-7">
         <MarketingStudio

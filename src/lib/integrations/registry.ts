@@ -47,7 +47,9 @@ export const INTEGRATIONS: IntegrationDescriptor[] = [
     key: "gmail",
     name: "Gmail",
     category: "email",
-    summary: "Read threads, find messages nobody answered, and stage drafts. This app never sends mail.",
+    summary:
+      "Read threads, find messages nobody answered, and stage drafts. This app never sends mail — enforced " +
+      "in code, since the gmail.compose scope itself does allow sending.",
     unlocks: [
       "Unanswered emails surface on the Today page",
       "Approved drafts land in your Gmail drafts folder",
@@ -61,7 +63,8 @@ export const INTEGRATIONS: IntegrationDescriptor[] = [
     setupSteps: [
       "Create a Google Cloud project and enable the Gmail API.",
       "Create an OAuth 2.0 Client ID of type Desktop app.",
-      "Run the consent flow requesting scopes gmail.readonly and gmail.compose.",
+      "Run the consent flow requesting scopes gmail.readonly and gmail.compose. Be aware gmail.compose " +
+        "grants send capability at the API level; this app simply never calls it.",
       "Store the resulting refresh token as GOOGLE_REFRESH_TOKEN.",
     ],
     docsUrl: "https://developers.google.com/gmail/api",

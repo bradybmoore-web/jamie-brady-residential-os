@@ -8,9 +8,11 @@ interface Props {
   useSupabase: boolean;
   profiles: { id: string; name: string; title: string }[];
   warning: string | null;
+  /** True when sign-in cannot succeed because SESSION_SECRET is missing. */
+  blocked: boolean;
 }
 
-export function LoginForm({ useSupabase, profiles, warning }: Props) {
+export function LoginForm({ useSupabase, profiles, warning, blocked }: Props) {
   const action = useSupabase ? signInWithSupabase : signInWithPasscode;
   const [state, formAction, pending] = useActionState<LoginState, FormData>(action, {});
 
@@ -64,8 +66,8 @@ export function LoginForm({ useSupabase, profiles, warning }: Props) {
           </p>
         ) : null}
 
-        <Button type="submit" variant="primary" disabled={pending} className="mt-1 w-full">
-          {pending ? "Signing in…" : "Sign in"}
+        <Button type="submit" variant="primary" disabled={pending || blocked} className="mt-1 w-full">
+          {blocked ? "Sign-in unavailable" : pending ? "Signing in…" : "Sign in"}
         </Button>
       </form>
 

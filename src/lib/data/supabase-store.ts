@@ -417,6 +417,17 @@ export class SupabaseStore implements DataStore {
     return this.update<IntegrationConnection>(TABLE.integrations, provider, patch, "provider");
   }
 
+  async hasSeedData(): Promise<boolean> {
+    const supabase = await this.client();
+    // One cheap existence probe per table that carries demo rows.
+    for (const table of [TABLE.contacts, TABLE.listings, TABLE.leads]) {
+      const { data, error } = await supabase.from(table).select("id").eq("is_seed", true).limit(1);
+      if (error) throw new Error(`Failed to check for seed data in ${table}: ${error.message}`);
+      if ((data ?? []).length > 0) return true;
+    }
+    return false;
+  }
+
   listAuditLog() {
     return this.selectAll<AuditLogEntry>(TABLE.auditLog, "created_at");
   }

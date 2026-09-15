@@ -2,7 +2,16 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { requireSession } from "@/lib/auth/session";
 import { getStore } from "@/lib/data/store";
-import { Badge, Card, CardContent, EmptyState, PageTitle, buttonClasses } from "@/components/ui/primitives";
+import {
+  Badge,
+  Card,
+  CardContent,
+  EmptyState,
+  PageTitle,
+  SeedMarker,
+  buttonClasses,
+} from "@/components/ui/primitives";
+import { DemoDataBanner } from "@/components/ui/demo-banner";
 import { LISTING_STATUS_LABELS, MARKETING_KIND_LABELS } from "@/lib/types";
 import { formatCurrency } from "@/lib/utils";
 
@@ -12,10 +21,11 @@ export const dynamic = "force-dynamic";
 export default async function MarketingPage() {
   await requireSession();
   const store = await getStore();
-  const [listings, properties, marketing] = await Promise.all([
+  const [listings, properties, marketing, hasSeedData] = await Promise.all([
     store.listListings(),
     store.listProperties(),
     store.listListingMarketing(),
+    store.hasSeedData(),
   ]);
   const propertyById = new Map(properties.map((p) => [p.id, p]));
 
@@ -32,6 +42,11 @@ export default async function MarketingPage() {
         </p>
       </header>
 
+      <DemoDataBanner
+        present={hasSeedData}
+        context="Copy generated for these listings describes fictional properties — do not publish it."
+      />
+
       {marketable.length === 0 ? (
         <Card className="mt-6">
           <EmptyState title="No listings to market" description="Add a listing to start generating content." />
@@ -47,7 +62,10 @@ export default async function MarketingPage() {
                 <CardContent className="pt-4">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <h2 className="text-[14.5px] font-semibold text-ink">{property?.address}</h2>
+                      <h2 className="text-[14.5px] font-semibold text-ink">
+                        {property?.address}
+                        {listing.isSeed ? <SeedMarker className="ml-1.5 align-middle" /> : null}
+                      </h2>
                       <p className="mt-0.5 text-[12px] text-ink-faint">
                         {property?.neighborhood ?? property?.city} · {formatCurrency(listing.listPrice)}
                       </p>

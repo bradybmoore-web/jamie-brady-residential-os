@@ -4,6 +4,7 @@ import { getStore } from "@/lib/data/store";
 import { identifyFollowUpOpportunities } from "@/lib/workflows/follow-up";
 import { OpportunityList, type OpportunityRow } from "@/components/opportunities/opportunity-list";
 import { Card, CardContent, PageTitle, Stat } from "@/components/ui/primitives";
+import { DemoDataBanner } from "@/components/ui/demo-banner";
 
 export const metadata: Metadata = { title: "Opportunities" };
 export const dynamic = "force-dynamic";
@@ -18,7 +19,7 @@ export default async function OpportunitiesPage() {
     opportunities = result.opportunities;
   }
 
-  const contacts = await store.listContacts();
+  const [contacts, hasSeedData] = await Promise.all([store.listContacts(), store.hasSeedData()]);
   const contactById = new Map(contacts.map((c) => [c.id, c]));
 
   const rows: OpportunityRow[] = opportunities
@@ -42,6 +43,11 @@ export default async function OpportunitiesPage() {
           active client has gone quiet — then weighs those against what kind of relationship it is.
         </p>
       </header>
+
+      <DemoDataBanner
+        present={hasSeedData}
+        context="Every opportunity below was scored from fictional contacts and engagement history."
+      />
 
       <Card className="mt-6 overflow-hidden">
         <div className="grid divide-y divide-line sm:grid-cols-3 sm:divide-y-0 sm:divide-x">

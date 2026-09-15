@@ -7,6 +7,7 @@ import { dailyCommandCenter } from "@/lib/workflows/daily-command-center";
 import { identifyFollowUpOpportunities } from "@/lib/workflows/follow-up";
 import { PriorityCard } from "@/components/today/priority-card";
 import { TodaySchedule, type ScheduleItem } from "@/components/today/schedule";
+import { DemoDataBanner } from "@/components/ui/demo-banner";
 import {
   Badge,
   Card,
@@ -16,11 +17,12 @@ import {
   EmptyState,
   PageTitle,
   SectionTitle,
+  SeedMarker,
   Stat,
   UrgencyDot,
   buttonClasses,
 } from "@/components/ui/primitives";
-import { contactName, type Opportunity } from "@/lib/types";
+import { contactName, type Contact, type Opportunity, type Priority } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
 
 export const metadata: Metadata = { title: "Today" };
@@ -40,13 +42,14 @@ export default async function TodayPage() {
     opportunities = result.opportunities;
   }
 
-  const [events, contacts, properties, listings, sellerUpdates, preps] = await Promise.all([
+  const [events, contacts, properties, listings, sellerUpdates, preps, hasSeedData] = await Promise.all([
     store.listCalendarEvents(),
     store.listContacts(),
     store.listProperties(),
     store.listListings(),
     store.listSellerUpdates(),
     Promise.all(brief.appointments.map((id) => store.getAppointmentPrepFor(id))),
+    store.hasSeedData(),
   ]);
 
   const contactById = new Map(contacts.map((c) => [c.id, c]));
@@ -70,6 +73,10 @@ export default async function TodayPage() {
     })
     .filter((x): x is ScheduleItem => x !== null);
 
+  const seedLeadIds = new Set(
+    (await store.listLeads()).filter((lead) => lead.isSeed).map((lead) => lead.id),
+  );
+
   const firstName = session.fullName.split(" ")[0];
   const greeting = getGreeting();
   const topOpportunities = [...opportunities].sort((a, b) => b.score - a.score).slice(0, 4);
@@ -92,6 +99,11 @@ export default async function TodayPage() {
           <ArrowRight className="size-3.5" strokeWidth={1.75} aria-hidden />
         </Link>
       </header>
+
+      <DemoDataBanner
+        present={hasSeedData}
+        context="Priorities, schedule and listing actions below are all derived from them."
+      />
 
       {/* Metrics */}
       <Card className="mt-6 overflow-hidden">
@@ -153,7 +165,14 @@ export default async function TodayPage() {
                 />
               </Card>
             ) : (
-              brief.peopleNeedingAttention.map((p, i) => <PriorityCard key={p.id} priority={p} rank={i + 1} />)
+              brief.peopleNeedingAttention.map((p, i) => (
+                <PriorityCard
+                  key={p.id}
+                  priority={p}
+                  rank={i + 1}
+                  isDemo={isDemoPriority(p, contactById, seedLeadIds)}
+                />
+              ))
             )}
           </div>
         </section>
@@ -233,7 +252,11 @@ export default async function TodayPage() {
               ) : (
                 <ul className="divide-y divide-line">
                   {topOpportunities.map((o) => (
-                    <OpportunityRow key={o.id} opportunity={o} />
+                    <OpportunityRow
+                      key={o.id}
+                      opportunity={o}
+                      isDemo={Boolean(o.contactId && contactById.get(o.contactId)?.isSeed)}
+                    />
                   ))}
                 </ul>
               )}
@@ -277,13 +300,16 @@ export default async function TodayPage() {
   );
 }
 
-function OpportunityRow({ opportunity }: { opportunity: Opportunity }) {
+function OpportunityRow({ opportunity, isDemo }: { opportunity: Opportunity; isDemo: boolean }) {
   return (
     <li className="px-5 py-3.5">
       <div className="flex items-start gap-2">
         <Lightbulb className="mt-0.5 size-3.5 shrink-0 text-brass" strokeWidth={1.75} aria-hidden />
         <div className="min-w-0 flex-1">
-          <p className="text-[13px] font-medium text-ink">{opportunity.title}</p>
+          <p className="text-[13px] font-medium text-ink">
+            {opportunity.title}
+            {isDemo ? <SeedMarker className="ml-1.5 align-middle" /> : null}
+          </p>
           <p className="mt-0.5 text-[12.5px] leading-relaxed text-ink-muted">{opportunity.whyNow}</p>
           {opportunity.suggestedConversationStarter ? (
             <p className="mt-1.5 border-l-2 border-brass/40 pl-2.5 text-[12px] italic leading-relaxed text-ink-faint">
@@ -294,6 +320,17 @@ function OpportunityRow({ opportunity }: { opportunity: Opportunity }) {
       </div>
     </li>
   );
+}
+
+/** A derived priority is demo data when the record it was built from is. */
+function isDemoPriority(
+  priority: Priority,
+  contactById: Map<string, Contact>,
+  seedLeadIds: Set<string>,
+): boolean {
+  if (priority.personId && contactById.get(priority.personId)?.isSeed) return true;
+  const [kind, id] = priority.id.split(":");
+  return kind === "lead" && seedLeadIds.has(id);
 }
 
 function getGreeting() {

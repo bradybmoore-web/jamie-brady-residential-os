@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { demoAuthWarning, getSession, listLoginProfiles } from "@/lib/auth/session";
+import { demoAuthBlocked, demoAuthWarning, getSession, listLoginProfiles } from "@/lib/auth/session";
 import { capabilities } from "@/lib/env";
 import { LoginForm } from "./login-form";
 
@@ -49,6 +49,7 @@ export default async function LoginPage() {
             useSupabase={capabilities.supabase}
             profiles={profiles.map((p) => ({ id: p.id, name: p.fullName, title: p.title ?? "" }))}
             warning={demoAuthWarning()}
+            blocked={demoAuthBlocked()}
           />
         </div>
       </section>

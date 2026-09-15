@@ -127,6 +127,15 @@ export interface DataStore {
   listIntegrations(): Promise<IntegrationConnection[]>;
   updateIntegration(provider: string, patch: Partial<IntegrationConnection>): Promise<IntegrationConnection>;
 
+  /**
+   * Whether any demo/seed records are present.
+   *
+   * Drives the "Demo data" labelling. Derived from the records themselves
+   * rather than from which store is active, because a real Supabase project
+   * seeded for a demo is still showing fictional clients.
+   */
+  hasSeedData(): Promise<boolean>;
+
   listAuditLog(): Promise<AuditLogEntry[]>;
   appendAudit(entry: Omit<AuditLogEntry, "id" | "createdAt" | "updatedAt">): Promise<AuditLogEntry>;
 }

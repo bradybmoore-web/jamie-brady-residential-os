@@ -3,6 +3,7 @@ import { Check, CircleDashed, Clock } from "lucide-react";
 import { requireSession } from "@/lib/auth/session";
 import { getStore } from "@/lib/data/store";
 import { capabilities, env, environmentReport } from "@/lib/env";
+import { mlsMode } from "@/lib/integrations/mls";
 import { getIntegrationStates, type IntegrationState } from "@/lib/integrations/registry";
 import {
   Badge,
@@ -31,7 +32,7 @@ export default async function SettingsPage() {
   const session = await requireSession();
   const store = await getStore();
   const integrations = getIntegrationStates();
-  const report = environmentReport();
+  const report = environmentReport(mlsMode() === "live");
   const runs = (await store.listAIRuns()).slice(0, 12);
 
   const connected = integrations.filter((i) => i.status === "connected").length;

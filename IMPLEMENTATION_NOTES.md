@@ -26,17 +26,26 @@ Everything that needs credentials sits behind one of two seams:
 
 1. **`DataStore`** (`src/lib/data/store.ts`) — `MemoryStore` (seed data, works
    with zero configuration) or `SupabaseStore` (real Postgres). Selected at
-   runtime by `resolveStore()` based on whether Supabase env vars are present.
+   runtime by `getStore()` based on whether Supabase env vars are present.
 2. **`AIProvider`** (`src/lib/ai/provider.ts`) — `AnthropicProvider` or
    `MockProvider`, selected by the presence of `ANTHROPIC_API_KEY`.
+
+Both are resolved by `getStore()` and `getProvider()` respectively.
+
+A third seam was added in Security Phase 1: **MLS mode**. `LIVE_PROVIDERS` in
+`src/lib/integrations/mls/index.ts` lists the RESO providers that are actually
+*implemented*. `mlsMode()` derives from that registry, never from environment
+variables, so no configuration change can make mock comparables look live.
 
 Every page, workflow, and server action is written against the interface, never
 against Supabase or Anthropic directly.
 
 ### AI orchestration
 
-There is **one** orchestration layer (`src/lib/ai/orchestrator.ts`) that runs
-*named workflows*, not twelve autonomous agents. A workflow is a plain async
+There is **one** orchestration approach — named workflows in
+`src/lib/workflows/`, not twelve autonomous agents. There are seven:
+`daily-command-center`, `analyze-lead`, `follow-up`, `listing-marketing`,
+`seller-update`, `appointment-prep` and `assistant`. Each is a plain async
 function that:
 
 1. gathers facts from the `DataStore` and integration adapters,
@@ -78,10 +87,30 @@ where the real transport goes.
    `ownerId` and the seed data assigns work to both.
 7. Seed records all carry `isSeed: true` and render a "Demo data" marker.
 
-## 4. Known deliberate omissions
+## 4. Security Phase 1 (completed)
+
+An audit found three critical authorization defects and several supporting
+issues. All were fixed before any real credential was introduced:
+
+| Problem | Fix |
+| --- | --- |
+| Session cookies fell back to a hard-coded signing key checked into the repo | No default key exists. Production fails closed; development uses a random per-process key. |
+| A demo cookie still authenticated after Supabase Auth was configured | `getSession()` has no fallback path. Four independent layers refuse demo auth when Supabase is configured. |
+| Any Supabase signup received a profile, and any profile granted full access | `profiles.approved` defaults to false; access requires an allowlisted address. Column-level grants stop self-approval. |
+| Setting `MLS_*` variables removed the "mock data" warnings while data stayed fabricated | Status derives from the implemented-provider registry, not from configuration. |
+| `gmail.compose` was documented as unable to send | Corrected — the scope does permit sending. The no-send guarantee is enforced in code and asserted by a test. |
+| No throttling on sign-in or the assistant endpoint | Fixed-window limiter behind a swappable `RateLimitStore`. |
+| `/api/health` disclosed which integrations were connected | Reduced to liveness only. |
+
+See `tests/security.test.ts` for the properties these changes are required to
+keep.
+
+## 5. Known deliberate omissions
 
 - No microservices, no queue, no background worker. Workflows run on request
   and cache their result for the day in `daily_briefs`.
 - `MemoryStore` mutations live for the lifetime of the server process. That is
   correct for a demo and irrelevant once Supabase is connected.
 - Mobile is responsive but desktop-first, as specified.
+- The rate limiter is in-process. It is per-instance and resets on deploy;
+  `setRateLimitStore()` is the seam for a durable store before scaling out.

@@ -3,7 +3,8 @@ import { requireSession } from "@/lib/auth/session";
 import { capabilities } from "@/lib/env";
 import { getStore } from "@/lib/data/store";
 import { ApprovalQueue } from "@/components/approvals/queue";
-import { Card, CardContent, PageTitle, SectionTitle, Stat } from "@/components/ui/primitives";
+import { Card, CardContent, PageTitle, SectionTitle, SeedMarker, Stat } from "@/components/ui/primitives";
+import { DemoDataBanner } from "@/components/ui/demo-banner";
 
 export const metadata: Metadata = { title: "Approvals" };
 export const dynamic = "force-dynamic";
@@ -11,7 +12,24 @@ export const dynamic = "force-dynamic";
 export default async function ApprovalsPage() {
   await requireSession();
   const store = await getStore();
-  const actions = await store.listAIActions();
+  const [actions, hasSeedData, leads, contacts] = await Promise.all([
+    store.listAIActions(),
+    store.hasSeedData(),
+    store.listLeads(),
+    store.listContacts(),
+  ]);
+
+  // An action is demo data when the lead or contact it was drafted for is.
+  const seedLeadIds = new Set(leads.filter((l) => l.isSeed).map((l) => l.id));
+  const seedContactIds = new Set(contacts.filter((c) => c.isSeed).map((c) => c.id));
+  const demoActionIds = new Set(
+    actions
+      .filter(
+        (a) =>
+          (a.leadId && seedLeadIds.has(a.leadId)) || (a.contactId && seedContactIds.has(a.contactId)),
+      )
+      .map((a) => a.id),
+  );
 
   const waiting = actions.filter((a) => a.status === "needs_review" || a.status === "draft");
   const approved = actions.filter((a) => a.status === "approved");
@@ -28,6 +46,11 @@ export default async function ApprovalsPage() {
           it.
         </p>
       </header>
+
+      <DemoDataBanner
+        present={hasSeedData}
+        context="Drafts addressed to fictional contacts are marked below — never send one to a real address."
+      />
 
       {!capabilities.google ? (
         <p className="mt-5 rounded-[6px] border border-line bg-warn-soft/50 px-4 py-3 text-[12.5px] leading-relaxed text-warn">
@@ -52,7 +75,7 @@ export default async function ApprovalsPage() {
       <section className="mt-7">
         <SectionTitle>Waiting for review</SectionTitle>
         <div className="mt-3">
-          <ApprovalQueue items={waiting} />
+          <ApprovalQueue items={waiting} demoActionIds={demoActionIds} />
         </div>
       </section>
 
@@ -60,7 +83,7 @@ export default async function ApprovalsPage() {
         <section className="mt-8">
           <SectionTitle>Approved, ready to send</SectionTitle>
           <div className="mt-3">
-            <ApprovalQueue items={approved} />
+            <ApprovalQueue items={approved} demoActionIds={demoActionIds} />
           </div>
         </section>
       ) : null}
@@ -74,7 +97,10 @@ export default async function ApprovalsPage() {
                 {settled.map((a) => (
                   <li key={a.id} className="py-2.5 first:pt-0 last:pb-0">
                     <div className="flex items-baseline justify-between gap-3">
-                      <span className="truncate text-[12.5px] text-ink">{a.title}</span>
+                      <span className="truncate text-[12.5px] text-ink">
+                        {a.title}
+                        {demoActionIds.has(a.id) ? <SeedMarker className="ml-1.5 align-middle" /> : null}
+                      </span>
                       <span className="shrink-0 text-[11.5px] text-ink-faint">
                         {a.status === "executed" ? (capabilities.google ? "Sent" : "Handled") : "Rejected"}
                       </span>
