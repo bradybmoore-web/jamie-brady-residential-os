@@ -15,7 +15,7 @@
 --     person's credentials. Visible only to its owner, and its token columns
 --     are readable by no user role at all.
 
-create table public.integration_accounts (
+create table if not exists public.integration_accounts (
   id uuid primary key default gen_random_uuid(),
   profile_id uuid not null references public.profiles(id) on delete cascade,
   provider text not null check (provider in ('google', 'cloze', 'activepipe', 'docusign')),
@@ -45,8 +45,9 @@ create table public.integration_accounts (
   unique (profile_id, provider)
 );
 
-create index integration_accounts_profile_idx on public.integration_accounts (profile_id);
+create index if not exists integration_accounts_profile_idx on public.integration_accounts (profile_id);
 
+drop trigger if exists integration_accounts_touch on public.integration_accounts;
 create trigger integration_accounts_touch
   before update on public.integration_accounts
   for each row execute function public.touch_updated_at();
@@ -57,20 +58,24 @@ alter table public.integration_accounts enable row level security;
 
 -- Unlike every other table, this one is NOT team-wide. A connection belongs to
 -- one person. Being an approved team member is necessary but not sufficient.
+drop policy if exists integration_accounts_select on public.integration_accounts;
 create policy integration_accounts_select on public.integration_accounts
   for select to authenticated
   using (public.is_team_member() and profile_id = public.current_profile_id());
 
+drop policy if exists integration_accounts_insert on public.integration_accounts;
 create policy integration_accounts_insert on public.integration_accounts
   for insert to authenticated
   with check (public.is_team_member() and profile_id = public.current_profile_id());
 
+drop policy if exists integration_accounts_update on public.integration_accounts;
 create policy integration_accounts_update on public.integration_accounts
   for update to authenticated
   using (public.is_team_member() and profile_id = public.current_profile_id())
   with check (public.is_team_member() and profile_id = public.current_profile_id());
 
 -- Disconnecting is deleting your own row.
+drop policy if exists integration_accounts_delete on public.integration_accounts;
 create policy integration_accounts_delete on public.integration_accounts
   for delete to authenticated
   using (public.is_team_member() and profile_id = public.current_profile_id());

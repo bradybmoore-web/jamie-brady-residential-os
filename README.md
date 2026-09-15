@@ -214,19 +214,23 @@ both back. Do not set them until the verification step below passes.
    Email → disable *Allow new users to sign up*. The allowlist means an
    unwanted signup grants nothing, but there is no reason to accept one.
 
-3. Apply the migrations **in numerical order**:
+3. Apply the schema. Easiest is one paste: copy all of
+   `supabase/setup/all-migrations.sql` into the SQL editor and run it. That file
+   is generated from the numbered migrations in order
+   (`npm run db:build-setup` regenerates it), and it is idempotent — running it
+   twice is harmless, which matters when a human is pasting it by hand.
+
+   With the CLI instead:
 
    ```bash
    npx supabase link --project-ref <your-ref>
    npm run db:push
    ```
 
-   Or paste each file from `supabase/migrations/` into the SQL editor in order:
-   `0001` → `0002` → `0003` → `0004` → `0005`. Later migrations depend on
-   objects created by earlier ones.
-
-4. Allow the two people who should have access. Addresses are supplied on the
-   command line and never stored in this repository:
+4. Allow the two people who should have access, **before creating their
+   accounts** — the trigger reads the allowlist at the moment an account is
+   created. Either edit the two placeholders in
+   `supabase/setup/02-allowlist.sql` and run it in the SQL editor, or:
 
    ```bash
    npm run team:allow -- jamie@herdomain.com "Jamie Moore"
@@ -234,18 +238,23 @@ both back. Do not set them until the verification step below passes.
    npm run team:list
    ```
 
+   Addresses live in the database and on the command line, never in this
+   repository.
+
 5. Each person creates their account in the app (or via Dashboard →
    Authentication → Users → Add user). Because their address is allowlisted,
    they are approved automatically. **Anyone else who signs up gets an account
    that can read nothing** and sees the "not approved" screen.
 
-6. Verify before switching over. This only reads, and it checks the tables
-   exist, that an anonymous visitor reads nothing, and that somebody is
-   approved:
+6. Verify before switching over. Create one throwaway account with an address
+   that is *not* allowlisted, then run `supabase/setup/03-negative-tests.sql` in
+   the SQL editor. It exercises the real policies as the real roles — anonymous,
+   unapproved, and approved — and every row of its output should read PASS.
+   Delete the throwaway account afterwards.
 
-   ```bash
-   npm run db:verify
-   ```
+   From a terminal, `npm run db:verify` performs a complementary check against
+   the live project (tables present, anonymous reads nothing, someone is
+   approved).
 
 7. Only once that passes, put the two `NEXT_PUBLIC_SUPABASE_*` values into the
    environment and restart. The app switches to `SupabaseStore` and Supabase

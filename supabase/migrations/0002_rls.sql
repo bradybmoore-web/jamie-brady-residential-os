@@ -43,18 +43,22 @@ begin
   ]
   loop
     execute format('alter table public.%I enable row level security', t);
+    execute format('drop policy if exists %I on public.%I', t || '_select', t);
     execute format(
       'create policy %I on public.%I for select to authenticated using (public.is_team_member())',
       t || '_select', t
     );
+    execute format('drop policy if exists %I on public.%I', t || '_insert', t);
     execute format(
       'create policy %I on public.%I for insert to authenticated with check (public.is_team_member())',
       t || '_insert', t
     );
+    execute format('drop policy if exists %I on public.%I', t || '_update', t);
     execute format(
       'create policy %I on public.%I for update to authenticated using (public.is_team_member()) with check (public.is_team_member())',
       t || '_update', t
     );
+    execute format('drop policy if exists %I on public.%I', t || '_delete', t);
     execute format(
       'create policy %I on public.%I for delete to authenticated using (public.is_team_member())',
       t || '_delete', t
@@ -66,14 +70,17 @@ $$;
 -- Profiles: you may read the team, but only edit yourself.
 alter table public.profiles enable row level security;
 
+drop policy if exists profiles_select on public.profiles;
 create policy profiles_select on public.profiles
   for select to authenticated
   using (public.is_team_member());
 
+drop policy if exists profiles_insert_self on public.profiles;
 create policy profiles_insert_self on public.profiles
   for insert to authenticated
   with check (user_id = auth.uid());
 
+drop policy if exists profiles_update_self on public.profiles;
 create policy profiles_update_self on public.profiles
   for update to authenticated
   using (user_id = auth.uid())
@@ -84,10 +91,12 @@ create policy profiles_update_self on public.profiles
 -- role regardless of what the application asks for.
 alter table public.audit_log enable row level security;
 
+drop policy if exists audit_log_select on public.audit_log;
 create policy audit_log_select on public.audit_log
   for select to authenticated
   using (public.is_team_member());
 
+drop policy if exists audit_log_insert on public.audit_log;
 create policy audit_log_insert on public.audit_log
   for insert to authenticated
   with check (public.is_team_member());

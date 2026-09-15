@@ -1,3 +1,23 @@
+-- =============================================================================
+-- Jamie & Brady Residential OS — complete database setup
+--
+-- GENERATED FILE. Do not edit by hand: run `npm run db:build-setup`.
+-- Source of truth is supabase/migrations/, applied here in numerical order:
+--   0001_init.sql
+--   0002_rls.sql
+--   0003_approved_team_members.sql
+--   0004_integration_accounts.sql
+--   0005_profile_provenance.sql
+--
+-- Paste the whole thing into the Supabase SQL editor and run it once. It is
+-- safe to run again: every statement is written to be idempotent or to fail
+-- loudly rather than half-apply.
+-- =============================================================================
+
+-- --------------------------------------------------------------------------
+-- 0001_init.sql
+-- --------------------------------------------------------------------------
+
 -- Jamie & Brady Residential OS — core schema
 -- Postgres / Supabase. UUID primary keys, created_at / updated_at everywhere,
 -- source_system + source_id on anything that can originate outside the app.
@@ -712,3 +732,459 @@ begin
   end loop;
 end;
 $$;
+
+-- --------------------------------------------------------------------------
+-- 0002_rls.sql
+-- --------------------------------------------------------------------------
+
+-- Row level security.
+--
+-- Model: this is a two-person brokerage team. Both agents are trusted with the
+-- whole book of business, so the rule is "any authenticated team member with a
+-- profile can read and write", not per-record ownership walls. That is a
+-- deliberate simplification — the brief explicitly says not to build
+-- complicated permissions. Ownership is still recorded on every row via
+-- owner_id/assigned_to so tighter policies can be layered on later without a
+-- schema change.
+--
+-- The service role key bypasses RLS and is only ever used server-side.
+
+create or replace function public.is_team_member()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.profiles p where p.user_id = auth.uid()
+  );
+$$;
+
+create or replace function public.current_profile_id()
+returns uuid
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select p.id from public.profiles p where p.user_id = auth.uid() limit 1;
+$$;
+
+do $$
+declare t text;
+begin
+  foreach t in array array[
+    'contacts_cache','contact_notes','stated_plans','leads','properties','listings',
+    'showing_feedback','seller_updates','buyers','transactions','tasks','calendar_events_cache',
+    'email_events_cache','opportunities','ai_runs','ai_actions','listing_marketing',
+    'marketing_assets','daily_briefs','appointment_preps','integration_connections'
+  ]
+  loop
+    execute format('alter table public.%I enable row level security', t);
+    execute format('drop policy if exists %I on public.%I', t || '_select', t);
+    execute format(
+      'create policy %I on public.%I for select to authenticated using (public.is_team_member())',
+      t || '_select', t
+    );
+    execute format('drop policy if exists %I on public.%I', t || '_insert', t);
+    execute format(
+      'create policy %I on public.%I for insert to authenticated with check (public.is_team_member())',
+      t || '_insert', t
+    );
+    execute format('drop policy if exists %I on public.%I', t || '_update', t);
+    execute format(
+      'create policy %I on public.%I for update to authenticated using (public.is_team_member()) with check (public.is_team_member())',
+      t || '_update', t
+    );
+    execute format('drop policy if exists %I on public.%I', t || '_delete', t);
+    execute format(
+      'create policy %I on public.%I for delete to authenticated using (public.is_team_member())',
+      t || '_delete', t
+    );
+  end loop;
+end;
+$$;
+
+-- Profiles: you may read the team, but only edit yourself.
+alter table public.profiles enable row level security;
+
+drop policy if exists profiles_select on public.profiles;
+create policy profiles_select on public.profiles
+  for select to authenticated
+  using (public.is_team_member());
+
+drop policy if exists profiles_insert_self on public.profiles;
+create policy profiles_insert_self on public.profiles
+  for insert to authenticated
+  with check (user_id = auth.uid());
+
+drop policy if exists profiles_update_self on public.profiles;
+create policy profiles_update_self on public.profiles
+  for update to authenticated
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid());
+
+-- Audit log: append-only from the application's point of view. No update or
+-- delete policy exists, so those operations are denied for every authenticated
+-- role regardless of what the application asks for.
+alter table public.audit_log enable row level security;
+
+drop policy if exists audit_log_select on public.audit_log;
+create policy audit_log_select on public.audit_log
+  for select to authenticated
+  using (public.is_team_member());
+
+drop policy if exists audit_log_insert on public.audit_log;
+create policy audit_log_insert on public.audit_log
+  for insert to authenticated
+  with check (public.is_team_member());
+
+-- New auth users get a profile automatically so RLS lets them in on first load.
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.profiles (user_id, full_name, email)
+  values (
+    new.id,
+    coalesce(new.raw_user_meta_data ->> 'full_name', split_part(new.email, '@', 1)),
+    new.email
+  )
+  on conflict (user_id) do nothing;
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute function public.handle_new_user();
+
+-- --------------------------------------------------------------------------
+-- 0003_approved_team_members.sql
+-- --------------------------------------------------------------------------
+
+-- Explicit authorization.
+--
+-- Migration 0002 granted access to anyone holding a row in `profiles`, and
+-- `handle_new_user` created that row for every new auth user. Supabase projects
+-- allow public email signup by default, so the combination meant that anyone
+-- who could reach the signup endpoint could read the entire book of business.
+--
+-- This migration makes authorization explicit and deny-by-default:
+--
+--   * `profiles.approved` defaults to FALSE. An unapproved profile sees nothing.
+--   * `allowed_team_emails` is an allowlist. Signing up with an address on it
+--     approves the profile automatically; signing up with any other address
+--     creates an unapproved profile that cannot read a single row.
+--   * A signed-in user cannot approve themselves. Column-level grants prevent
+--     `approved` from being written by the `authenticated` role at all, and the
+--     row policies refuse it a second time.
+--
+-- Bootstrapping is a deliberate, manual act performed with the service role or
+-- the SQL editor. See README -> "Authorizing team members".
+
+/* ------------------------------------------------------------- allowlist */
+
+create table if not exists public.allowed_team_emails (
+  -- Always stored lowercase; the trigger and the constraint both fold case.
+  email text primary key check (email = lower(email)),
+  note text,
+  created_at timestamptz not null default now()
+);
+
+alter table public.allowed_team_emails enable row level security;
+
+-- Approved members may see who else is permitted. Nobody using the anon or
+-- authenticated role may modify it: there is no insert, update or delete
+-- policy, so those operations are denied regardless of grants. Changing the
+-- allowlist requires the service role or direct SQL access.
+drop policy if exists allowed_team_emails_select on public.allowed_team_emails;
+create policy allowed_team_emails_select on public.allowed_team_emails
+  for select to authenticated
+  using (public.is_team_member());
+
+/* ----------------------------------------------------- profiles.approved */
+
+alter table public.profiles
+  add column if not exists approved boolean not null default false,
+  add column if not exists approved_at timestamptz,
+  add column if not exists approved_by uuid references public.profiles(id) on delete set null;
+
+create index if not exists profiles_approved_idx on public.profiles (approved) where approved;
+
+/* -------------------------------------------------- deny-by-default gate */
+
+-- Redefining this function re-secures every policy written in 0002, since they
+-- all call it. Access now requires an approved profile, not merely any profile.
+create or replace function public.is_team_member()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.profiles p
+    where p.user_id = auth.uid()
+      and p.approved
+  );
+$$;
+
+create or replace function public.current_profile_id()
+returns uuid
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select p.id
+  from public.profiles p
+  where p.user_id = auth.uid()
+    and p.approved
+  limit 1;
+$$;
+
+/* ------------------------------------------- signup cannot self-authorize */
+
+-- Column-level privileges: the `authenticated` role may never write `approved`,
+-- `approved_at`, `approved_by`, `user_id` or `email`. Supabase grants ALL on
+-- public tables to `authenticated` by default, so these have to be revoked
+-- before the narrower grants are issued.
+revoke insert, update on public.profiles from authenticated;
+grant insert (user_id, full_name, email) on public.profiles to authenticated;
+grant update (full_name, title, phone, license_number) on public.profiles to authenticated;
+
+-- Belt and braces: even if a future grant were widened by mistake, the row
+-- policy still refuses a self-inserted profile that claims to be approved.
+drop policy if exists profiles_insert_self on public.profiles;
+create policy profiles_insert_self on public.profiles
+  for insert to authenticated
+  with check (user_id = auth.uid() and approved = false);
+
+drop policy if exists profiles_update_self on public.profiles;
+create policy profiles_update_self on public.profiles
+  for update to authenticated
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid());
+
+-- A new auth user is approved only if their address is on the allowlist.
+-- Everyone else gets an unapproved profile: it records that they signed up,
+-- and it grants them nothing.
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  is_allowed boolean;
+begin
+  select exists (
+    select 1 from public.allowed_team_emails a
+    where a.email = lower(new.email)
+  ) into is_allowed;
+
+  insert into public.profiles (user_id, full_name, email, approved, approved_at)
+  values (
+    new.id,
+    coalesce(new.raw_user_meta_data ->> 'full_name', split_part(new.email, '@', 1)),
+    new.email,
+    is_allowed,
+    case when is_allowed then now() else null end
+  )
+  on conflict (user_id) do nothing;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute function public.handle_new_user();
+
+/* --------------------------------------------------------------- helpers */
+
+-- Approve someone already signed up. Intended for the SQL editor or the
+-- service role. It is NOT granted to `authenticated`, so a signed-in user
+-- cannot call it to approve themselves.
+create or replace function public.approve_team_member(target_email text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.allowed_team_emails (email, note)
+  values (lower(target_email), 'added by approve_team_member')
+  on conflict (email) do nothing;
+
+  update public.profiles
+  set approved = true,
+      approved_at = coalesce(approved_at, now())
+  where lower(email) = lower(target_email);
+end;
+$$;
+
+revoke all on function public.approve_team_member(text) from public, anon, authenticated;
+-- Granted explicitly rather than relying on Supabase's default function
+-- privileges, so this keeps working if those defaults ever change.
+grant execute on function public.approve_team_member(text) to service_role;
+
+-- Revoke access for someone who should no longer see client data.
+create or replace function public.revoke_team_member(target_email text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  delete from public.allowed_team_emails where email = lower(target_email);
+  update public.profiles
+  set approved = false, approved_at = null
+  where lower(email) = lower(target_email);
+end;
+$$;
+
+revoke all on function public.revoke_team_member(text) from public, anon, authenticated;
+grant execute on function public.revoke_team_member(text) to service_role;
+
+-- --------------------------------------------------------------------------
+-- 0004_integration_accounts.sql
+-- --------------------------------------------------------------------------
+
+-- Per-person integration credentials.
+--
+-- Architecture for Phase 3, created now so the shape is settled and tested
+-- before any real token exists. NOTHING WRITES TO THIS TABLE YET.
+--
+-- Why it exists: the Gmail and Calendar adapters currently read a single
+-- refresh token from the environment, which would make both agents act as one
+-- Google identity — Brady's session would read Jamie's mailbox. Jamie's tokens
+-- must belong to Jamie's profile. This table is that ownership.
+--
+-- Note the distinction from `integration_connections`:
+--   * integration_connections — one row per vendor, describing whether the
+--     product as a whole is wired up to Cloze/Gmail/MLS. Team-visible.
+--   * integration_accounts    — one row per person per vendor, holding that
+--     person's credentials. Visible only to its owner, and its token columns
+--     are readable by no user role at all.
+
+create table if not exists public.integration_accounts (
+  id uuid primary key default gen_random_uuid(),
+  profile_id uuid not null references public.profiles(id) on delete cascade,
+  provider text not null check (provider in ('google', 'cloze', 'activepipe', 'docusign')),
+
+  -- Which account was connected, for display ("Connected as jamie@...").
+  account_email text,
+  status text not null default 'disconnected'
+    check (status in ('connected', 'disconnected', 'error', 'revoked')),
+  scopes text[] not null default '{}',
+
+  -- Credentials. Encrypted by the application before they are written; the
+  -- database never sees a usable plaintext token. Read server-side with the
+  -- service role only — see the grants below, which deny these columns to every
+  -- user-facing role so a token cannot leak through an ordinary query.
+  access_token text,
+  refresh_token text,
+  access_token_expires_at timestamptz,
+
+  connected_at timestamptz,
+  last_refreshed_at timestamptz,
+  last_error text,
+
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+
+  -- One connection per person per vendor.
+  unique (profile_id, provider)
+);
+
+create index if not exists integration_accounts_profile_idx on public.integration_accounts (profile_id);
+
+drop trigger if exists integration_accounts_touch on public.integration_accounts;
+create trigger integration_accounts_touch
+  before update on public.integration_accounts
+  for each row execute function public.touch_updated_at();
+
+/* ------------------------------------------------------------------ access */
+
+alter table public.integration_accounts enable row level security;
+
+-- Unlike every other table, this one is NOT team-wide. A connection belongs to
+-- one person. Being an approved team member is necessary but not sufficient.
+drop policy if exists integration_accounts_select on public.integration_accounts;
+create policy integration_accounts_select on public.integration_accounts
+  for select to authenticated
+  using (public.is_team_member() and profile_id = public.current_profile_id());
+
+drop policy if exists integration_accounts_insert on public.integration_accounts;
+create policy integration_accounts_insert on public.integration_accounts
+  for insert to authenticated
+  with check (public.is_team_member() and profile_id = public.current_profile_id());
+
+drop policy if exists integration_accounts_update on public.integration_accounts;
+create policy integration_accounts_update on public.integration_accounts
+  for update to authenticated
+  using (public.is_team_member() and profile_id = public.current_profile_id())
+  with check (public.is_team_member() and profile_id = public.current_profile_id());
+
+-- Disconnecting is deleting your own row.
+drop policy if exists integration_accounts_delete on public.integration_accounts;
+create policy integration_accounts_delete on public.integration_accounts
+  for delete to authenticated
+  using (public.is_team_member() and profile_id = public.current_profile_id());
+
+-- Column privileges: no user-facing role may read or write the credential
+-- columns, even for its own row. Tokens are handled exclusively by server-side
+-- code holding the service role, so they can never be returned to a browser by
+-- an ordinary `select *`.
+revoke all on public.integration_accounts from anon, authenticated;
+
+grant select (
+  id, profile_id, provider, account_email, status, scopes,
+  access_token_expires_at, connected_at, last_refreshed_at, last_error,
+  created_at, updated_at
+) on public.integration_accounts to authenticated;
+
+grant insert (profile_id, provider, account_email, status, scopes) on public.integration_accounts to authenticated;
+grant update (account_email, status, scopes) on public.integration_accounts to authenticated;
+grant delete on public.integration_accounts to authenticated;
+
+-- --------------------------------------------------------------------------
+-- 0005_profile_provenance.sql
+-- --------------------------------------------------------------------------
+
+-- Bring `profiles` in line with every other table.
+--
+-- Found by tests/db/schema-conformance.test.ts, which maps the TypeScript
+-- domain model onto the real schema: `Profile` extends `BaseRecord`, so the
+-- store writes `source_system` and `is_seed` for it as it does for every other
+-- record — but migration 0001 never gave `profiles` those columns. The mismatch
+-- was invisible while the app ran on MemoryStore and would have surfaced as a
+-- failed insert the first time a profile was written to Postgres.
+--
+-- Added as a new migration rather than by editing 0001, so that any database
+-- already carrying 0001 moves forward cleanly instead of silently diverging.
+
+alter table public.profiles
+  add column if not exists source_system source_system not null default 'manual',
+  add column if not exists source_id text,
+  add column if not exists is_seed boolean not null default false;
+
+-- These are provenance, not authorization, but they are still not the
+-- signed-in user's to rewrite: the column grants from 0003 deliberately list
+-- only the display fields, and adding columns does not widen them.
+
+-- =============================================================================
+-- Setup complete. Next: add the two permitted addresses to the allowlist with
+-- supabase/setup/02-allowlist.sql, then create those two users in
+-- Authentication -> Users. Signing up does not grant access; being allowlisted
+-- at the moment the account is created does.
+-- =============================================================================

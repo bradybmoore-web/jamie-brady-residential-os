@@ -17,7 +17,8 @@
     "db:verify": "tsx scripts/verify-supabase.ts",
     "team:list": "tsx scripts/team.ts list",
     "team:allow": "tsx scripts/team.ts allow",
-    "team:revoke": "tsx scripts/team.ts revoke"
+    "team:revoke": "tsx scripts/team.ts revoke",
+    "db:build-setup": "tsx scripts/build-setup-sql.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",
