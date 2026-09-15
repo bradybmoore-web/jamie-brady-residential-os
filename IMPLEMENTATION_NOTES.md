@@ -105,7 +105,43 @@ issues. All were fixed before any real credential was introduced:
 See `tests/security.test.ts` for the properties these changes are required to
 keep.
 
-## 5. Known deliberate omissions
+## 5. Phase 2 — Supabase foundation
+
+Prepared, tested, and not yet switched on. No external service is connected.
+
+**Testing against a real database.** `tests/db/` boots PostgreSQL 18 in-process
+via PGlite, installs the Supabase-shaped environment our policies assume (the
+`anon`/`authenticated`/`service_role` roles, `service_role` holding BYPASSRLS,
+default privileges granting ALL on public tables, `auth.users` and `auth.uid()`),
+then runs the real migrations and exercises the policies as real roles. Reading
+SQL cannot catch a subtly permissive policy; executing it can. The harness
+asserts its own fidelity — that table grants exist, so "sees nothing" means RLS
+denied rather than a grant being absent.
+
+This found two genuine defects that SQL review had missed:
+
+1. `profiles` lacked `source_system` and `is_seed` even though `Profile`
+   extends `BaseRecord`, so the first profile write to Postgres would have
+   failed. Fixed in `0005`.
+2. The approval helpers relied on Supabase's default function privileges for
+   the service role to reach them. Now granted explicitly.
+
+**Per-person credentials.** `integration_accounts` (migration `0004`) is the
+one table that is not team-wide. A row belongs to a single profile, and its
+token columns are granted to no user-facing role. Jamie's Google tokens will
+belong to Jamie; Brady connecting later is a second row.
+
+**Session refresh.** The middleware now creates a Supabase server client and
+calls `auth.getUser()`, which performs the token refresh and writes new cookies
+onto the response — including through a redirect. `supabase/server.ts` had long
+claimed the middleware did this; it did not, which is why sessions died hourly.
+
+**One switch.** Setting the two `NEXT_PUBLIC_SUPABASE_*` variables moves data
+and authentication together; removing them moves both back. Mixed states are not
+possible, which keeps rollback trivial and avoids a Supabase session pointing at
+profile ids that only exist in memory.
+
+## 6. Known deliberate omissions
 
 - No microservices, no queue, no background worker. Workflows run on request
   and cache their result for the day in `daily_briefs`.

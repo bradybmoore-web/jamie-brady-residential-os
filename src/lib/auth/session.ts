@@ -16,6 +16,20 @@ export interface Session {
   mode: "supabase" | "demo";
 }
 
+/**
+ * The three states a visitor can be in.
+ *
+ * `pending_approval` exists because authenticating and being authorized are
+ * different things here. Someone can hold a perfectly valid Supabase session
+ * and still be entitled to nothing. Collapsing that into "not signed in" sent
+ * them back to a login screen they had just used successfully, which reads as
+ * a broken app rather than a deliberate refusal.
+ */
+export type AuthState =
+  | { status: "anonymous" }
+  | { status: "pending_approval"; email: string; fullName: string }
+  | { status: "authorized"; session: Session };
+
 /* ------------------------------------------------------- demo cookie auth */
 
 /**
@@ -119,54 +133,81 @@ export function verifyDemoPasscode(input: string) {
 /* ------------------------------------------------------------- resolution */
 
 export async function getSession(): Promise<Session | null> {
+  const state = await getAuthState();
+  return state.status === "authorized" ? state.session : null;
+}
+
+/**
+ * Resolve the visitor's full state. Prefer this over `getSession()` anywhere the
+ * difference between "not signed in" and "signed in but not approved" changes
+ * what the person should see.
+ */
+export async function getAuthState(): Promise<AuthState> {
   // When Supabase Auth is configured it is the ONLY way in. There is no
   // fallback to the demo cookie: a failed or absent Supabase session must not
   // be rescued by a passcode cookie, or connecting Supabase would leave the
   // demo path open as a backdoor.
   if (isSupabaseAuthConfigured()) {
-    return getSupabaseSession();
+    return getSupabaseAuthState();
   }
 
   const cookieStore = await cookies();
   const token = cookieStore.get(SESSION_COOKIE)?.value;
-  if (!token) return null;
+  if (!token) return { status: "anonymous" };
 
   try {
-    return decodeDemoSession(token);
+    const session = decodeDemoSession(token);
+    return session ? { status: "authorized", session } : { status: "anonymous" };
   } catch (error) {
     // A missing signing secret in production must deny access, not crash into
     // an unauthenticated-but-rendered state.
     if (error instanceof SessionSecretMissingError) {
       console.error("[auth]", error.message);
-      return null;
+      return { status: "anonymous" };
     }
     throw error;
   }
 }
 
-async function getSupabaseSession(): Promise<Session | null> {
+async function getSupabaseAuthState(): Promise<AuthState> {
   try {
     const { getSupabaseServerClient } = await import("@/lib/supabase/server");
     const supabase = await getSupabaseServerClient();
+
+    // getUser() validates the token with Supabase rather than trusting the
+    // cookie's contents. getSession() would not.
     const { data, error } = await supabase.auth.getUser();
-    if (error || !data.user) return null;
+    if (error || !data.user) return { status: "anonymous" };
+
     const { data: profile } = await supabase
       .from("profiles")
       .select("id, full_name, email, approved")
       .eq("user_id", data.user.id)
       .maybeSingle();
-    // No profile, or an unapproved one, is not a session. Row level security
-    // would deny every query anyway; refusing here turns a confusingly empty
-    // app into an honest "you do not have access".
-    if (!profile || profile.approved !== true) return null;
+
+    // Authenticated but unauthorized. Row level security would deny every
+    // query anyway; saying so plainly beats rendering an empty application.
+    if (!profile || profile.approved !== true) {
+      return {
+        status: "pending_approval",
+        email: (profile?.email as string) ?? data.user.email ?? "",
+        fullName: (profile?.full_name as string) ?? "",
+      };
+    }
+
     return {
-      profileId: profile.id as string,
-      fullName: (profile.full_name as string) ?? "Team member",
-      email: (profile.email as string) ?? data.user.email ?? "",
-      mode: "supabase",
+      status: "authorized",
+      session: {
+        profileId: profile.id as string,
+        fullName: (profile.full_name as string) ?? "Team member",
+        email: (profile.email as string) ?? data.user.email ?? "",
+        mode: "supabase",
+      },
     };
-  } catch {
-    return null;
+  } catch (error) {
+    // A misconfigured or unreachable database must deny, never admit.
+    console.error("[auth] Could not resolve the Supabase session:", error);
+    return { status: "anonymous" };
   }
 }
 

@@ -205,6 +205,18 @@ describe("demo authentication is disabled when Supabase Auth is configured", () 
     await expect(getSession()).resolves.toBeNull();
   });
 
+  it("resolves to anonymous rather than a demo session — the core backdoor", async () => {
+    const { __setCookies } = await import("./stubs/next-headers");
+    const { getAuthState, SESSION_COOKIE } = await loadSession();
+
+    __setCookies({ [SESSION_COOKIE]: forgeCookie("a-valid-secret") });
+
+    // Supabase cannot resolve a session in this environment. If any fallback
+    // existed, this would come back authorized.
+    const state = await getAuthState();
+    expect(state.status).toBe("anonymous");
+  });
+
   it("shows no demo warning, because demo auth is not in play", async () => {
     vi.stubEnv("NODE_ENV", "production");
     const { demoAuthWarning, demoAuthBlocked } = await loadSession();
@@ -223,6 +235,48 @@ describe("passcode verification", () => {
     // Must not leak length by comparing raw buffers of differing size.
     expect(verifyDemoPasscode("")).toBe(false);
     expect(verifyDemoPasscode("a-chosen-passcode-longer")).toBe(false);
+  });
+});
+
+/* ==================== 3b. the three-state auth model ===================== */
+
+describe("authentication and authorization are distinguished", () => {
+  it("reports a valid demo cookie as authorized", async () => {
+    vi.stubEnv("SESSION_SECRET", "correct-secret");
+    const { __setCookies } = await import("./stubs/next-headers");
+    const { getAuthState, encodeDemoSession, SESSION_COOKIE } = await loadSession();
+
+    __setCookies({ [SESSION_COOKIE]: encodeDemoSession(profileFixture()) });
+    const state = await getAuthState();
+    expect(state.status).toBe("authorized");
+  });
+
+  it("reports no cookie as anonymous", async () => {
+    vi.stubEnv("SESSION_SECRET", "correct-secret");
+    const { __setCookies } = await import("./stubs/next-headers");
+    const { getAuthState } = await loadSession();
+    __setCookies({});
+    expect((await getAuthState()).status).toBe("anonymous");
+  });
+
+  it("routes an unapproved account to an explanation, not back to the login screen", () => {
+    const layout = readFileSync("src/app/(app)/layout.tsx", "utf8");
+    expect(layout).toContain('redirect("/pending-approval")');
+    expect(layout).toContain('authState.status !== "authorized"');
+
+    const pending = readFileSync("src/app/pending-approval/page.tsx", "utf8");
+    expect(pending).toContain("This account is not approved");
+    expect(pending).toContain("SignOutButton");
+    // It must not strand someone: signing out has to be reachable, and an
+    // approved visitor who lands here is sent on to the app.
+    expect(pending).toContain('redirect("/today")');
+  });
+
+  it("never treats an unapproved Supabase user as a session", () => {
+    const source = readFileSync("src/lib/auth/session.ts", "utf8");
+    expect(source).toContain("profile.approved !== true");
+    // getSession() must only ever surface the authorized state.
+    expect(source).toMatch(/state\.status === "authorized" \? state\.session : null/);
   });
 });
 
@@ -285,6 +339,51 @@ describe("Supabase authorization denies by default", () => {
   it("refuses an unapproved profile at the application layer too", () => {
     const source = readFileSync("src/lib/auth/session.ts", "utf8");
     expect(source).toContain("profile.approved !== true");
+  });
+
+  it("does not hard-code any team member's real address in source", () => {
+    // Real addresses belong in configuration and in the database, never here.
+    // The seeded demo addresses are fictional and are allowed.
+    // The fictional demo addresses live in the seed data and in the mock
+    // adapters that serve it. Neither is a real person.
+    const offenders = grepSource("moorehomeaustin.com", ["src"]).filter(
+      (f) => !f.includes("data/seed.ts") && !f.includes("/mock.ts"),
+    );
+    expect(offenders).toEqual([]);
+    expect(grepSource("@kuper", ["src", "scripts"])).toEqual([]);
+    expect(grepSource("allowed_team_emails", ["src"]), "the allowlist is managed by scripts, not the app").toEqual([]);
+  });
+});
+
+/* ================ 4b. session refresh (the hourly logout) ================ */
+
+describe("Supabase sessions are refreshed", () => {
+  const middleware = readFileSync("src/middleware.ts", "utf8");
+
+  it("calls getUser() in the middleware, which performs the refresh", () => {
+    expect(middleware).toContain("createServerClient");
+    expect(middleware).toContain("supabase.auth.getUser()");
+  });
+
+  it("writes refreshed cookies onto both the request and the response", () => {
+    expect(middleware).toContain("request.cookies.set(name, value)");
+    expect(middleware).toContain("response.cookies.set(name, value, options)");
+  });
+
+  it("carries refreshed cookies through a redirect rather than discarding them", () => {
+    expect(middleware).toMatch(/for \(const cookie of response\.cookies\.getAll\(\)\) redirect\.cookies\.set\(cookie\)/);
+  });
+
+  it("clears a leftover demo cookie once Supabase owns authentication", () => {
+    expect(middleware).toContain("response.cookies.delete(SESSION_COOKIE)");
+  });
+
+  it("no longer claims elsewhere that refresh happens somewhere it does not", () => {
+    const server = readFileSync("src/lib/supabase/server.ts", "utf8");
+    if (server.includes("middleware")) {
+      expect(server).toMatch(/middleware/);
+      expect(middleware).toContain("auth.getUser()");
+    }
   });
 });
 

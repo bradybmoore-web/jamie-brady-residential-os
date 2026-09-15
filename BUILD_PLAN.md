@@ -86,6 +86,25 @@ Status legend: `[x]` done · `[~]` done with a mock/stub behind a real interface
 - [x] Demo-data banners and per-row markers on Today, Opportunities, Marketing, Approvals
 - [x] Security regression tests (`tests/security.test.ts`, `tests/rate-limit.test.ts`)
 
+## Phase 2 — Supabase database and authentication foundation
+- [x] Reviewed migrations 0001-0003 for ordering, dependencies and RLS coverage
+- [x] `0004_integration_accounts.sql` — per-person credentials, owner-only RLS,
+      credential columns readable by no user role (Phase 3 groundwork; unused)
+- [x] `0005_profile_provenance.sql` — `source_system`/`source_id`/`is_seed` on
+      `profiles`, a model/schema mismatch found by the conformance tests
+- [x] Middleware session refresh via `supabase.auth.getUser()` — fixes the
+      roughly-hourly logout
+- [x] Three-state auth model (`anonymous` / `pending_approval` / `authorized`)
+      and a `/pending-approval` screen
+- [x] `npm run team:allow|revoke|list` — allowlist managed from the command
+      line; no address is stored in source
+- [x] `npm run db:verify` — pre-flight check to run before switching over
+- [x] `npm run db:seed` rewritten: loads demo business data only, creates no
+      accounts and grants no access
+- [x] Real-PostgreSQL RLS tests (PGlite) — 45 assertions
+- [x] Schema conformance tests — 20 assertions proving the domain model fits
+- [ ] Switch to Supabase (blocked: needs Brady to create the project)
+
 ## Deferred (explicitly out of MVP scope)
 - [ ] Real outbound send (email/SMS transport)
 - [ ] Live MLS ingestion (blocked on licensing)

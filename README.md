@@ -102,7 +102,7 @@ Next.js 16 (App Router, React 19, TypeScript)
 ├── lib/scoring/…            Deterministic ranking. No model involved.
 ├── lib/workflows/…          Six named workflows, one orchestration layer.
 ├── lib/integrations/…       One adapter per vendor: interface + mock + real.
-└── supabase/migrations/     24 tables, RLS policies, triggers.
+└── supabase/migrations/     25 tables, RLS policies, triggers.
 ```
 
 ### The two ideas the whole thing rests on
@@ -204,30 +204,89 @@ missing and the steps to obtain them.
 
 ## Supabase setup
 
+The two `NEXT_PUBLIC_SUPABASE_*` variables are a single switch: setting them
+moves **both** the database and authentication over at once. Removing them moves
+both back. Do not set them until the verification step below passes.
+
 1. Create a project at <https://supabase.com>.
-2. Copy the URL and anon key from **Project Settings → API** into `.env.local`.
-3. Apply the migrations:
+
+2. **Turn off public signup.** Dashboard → Authentication → Sign In / Providers →
+   Email → disable *Allow new users to sign up*. The allowlist means an
+   unwanted signup grants nothing, but there is no reason to accept one.
+
+3. Apply the migrations **in numerical order**:
 
    ```bash
    npx supabase link --project-ref <your-ref>
    npm run db:push
    ```
 
-   Or paste `supabase/migrations/0001_init.sql` then `0002_rls.sql` into the SQL
-   editor, in that order.
+   Or paste each file from `supabase/migrations/` into the SQL editor in order:
+   `0001` → `0002` → `0003` → `0004` → `0005`. Later migrations depend on
+   objects created by earlier ones.
 
-4. Load the demo data (optional, and it creates two auth users):
+4. Allow the two people who should have access. Addresses are supplied on the
+   command line and never stored in this repository:
 
    ```bash
-   SUPABASE_SERVICE_ROLE_KEY=… npm run db:seed
+   npm run team:allow -- jamie@herdomain.com "Jamie Moore"
+   npm run team:allow -- brady@hisdomain.com "Brady Moore"
+   npm run team:list
    ```
 
-   The script prints a temporary password per agent. Change them immediately.
-   Every row it writes is marked `is_seed`, so `delete from <table> where is_seed;`
-   removes all of it later.
+5. Each person creates their account in the app (or via Dashboard →
+   Authentication → Users → Add user). Because their address is allowlisted,
+   they are approved automatically. **Anyone else who signs up gets an account
+   that can read nothing** and sees the "not approved" screen.
 
-5. Restart. The app detects Supabase, switches to `SupabaseStore`, and swaps the
-   login screen for Supabase Auth.
+6. Verify before switching over. This only reads, and it checks the tables
+   exist, that an anonymous visitor reads nothing, and that somebody is
+   approved:
+
+   ```bash
+   npm run db:verify
+   ```
+
+7. Only once that passes, put the two `NEXT_PUBLIC_SUPABASE_*` values into the
+   environment and restart. The app switches to `SupabaseStore` and Supabase
+   Auth together.
+
+8. Optionally load the demo business data, owned by the approved accounts:
+
+   ```bash
+   npm run db:seed
+   ```
+
+   It creates no accounts and grants no access. Every row is marked `is_seed`
+   and is labelled "Demo" in the app; remove it later with
+   `delete from <table> where is_seed;`.
+
+### Rolling back
+
+Remove `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` and
+restart. The app returns to in-memory demo data and passcode sign-in. The
+Supabase project is untouched, so switching forward again is just putting the
+two variables back.
+
+### Sessions
+
+Supabase access tokens last about an hour. The middleware calls
+`supabase.auth.getUser()` on every request, which transparently exchanges an
+expiring token for a fresh one and writes the new cookies onto the response —
+including through a redirect. Without that step people were signed out roughly
+hourly.
+
+`getAuthState()` resolves one of three outcomes, and the distinction matters:
+
+| State | Meaning | Where they land |
+| --- | --- | --- |
+| `anonymous` | No valid session | `/login` |
+| `pending_approval` | Signed in, not authorized | `/pending-approval` |
+| `authorized` | Approved team member | the app |
+
+Authenticating and being authorized are different things. Collapsing them sent
+an unapproved person back to a login screen they had just used successfully,
+which reads as a broken app rather than a deliberate refusal.
 
 ### Authorizing team members
 
@@ -238,20 +297,21 @@ outright rather than rendering an empty screen.
 
 Approval comes from an explicit allowlist:
 
-```sql
--- Before Jamie and Brady sign up:
-insert into public.allowed_team_emails (email) values
-  ('jamie@example.com'),
-  ('brady@example.com');
-
--- Or, to approve someone who has already signed up:
-select public.approve_team_member('newperson@example.com');
-
--- To remove access:
-select public.revoke_team_member('formerperson@example.com');
+```bash
+npm run team:allow  -- person@example.com "Their Name"
+npm run team:list
+npm run team:revoke -- person@example.com
 ```
 
-`npm run db:seed` seeds the allowlist with the two agent addresses for you.
+Or, in the SQL editor:
+
+```sql
+select public.approve_team_member('person@example.com');
+select public.revoke_team_member('person@example.com');
+```
+
+Addresses are never written into this repository. They live in the database and
+are passed on the command line.
 
 A signed-in user **cannot approve themselves**. `authenticated` has no column
 privilege on `approved`, `approved_at`, `approved_by`, `user_id` or `email`, and
@@ -278,6 +338,14 @@ append-only for every authenticated role.
 > One consequence worth deciding on deliberately: once Gmail is connected, both
 > agents can read everything in `email_events_cache`, including the other's
 > client correspondence.
+
+**`integration_accounts` is the exception.** It holds each person's own
+credentials and is *not* team-wide: a row is visible only to the profile that
+owns it, and the `access_token` / `refresh_token` columns are readable by no
+user-facing role at all — only by server-side code holding the service role.
+This is what makes Phase 3 safe: Jamie's Google tokens will belong to Jamie's
+profile, not to a shared system identity, and Brady connecting his own account
+later is a second row rather than a conflict.
 
 ---
 
@@ -446,7 +514,7 @@ The same information is on Settings → Integrations for signed-in members.
 - **Rate limiting** on sign-in (per address and per identifier) and on
   `/api/assistant` (per profile).
 - **Deny-by-default authorization.** See "Authorizing team members" above.
-- **Row level security** on all 24 tables. The service role key is used only by
+- **Row level security** on all 25 tables. The service role key is used only by
   the seed script and never in a request path.
 - **Server-side secrets only.** `lib/env.ts` is marked `server-only`; the only
   values that reach the browser are the two `NEXT_PUBLIC_` Supabase values.
@@ -490,10 +558,12 @@ Stated plainly, because a demo that pretends otherwise wastes everyone's time.
 10. **Rate limiting is in-process.** Limits are per instance and reset on
     deploy. Swap in a durable `RateLimitStore` before running more than one
     instance.
-11. **Google OAuth is not built yet.** There is no callback route and no token
-    storage; the adapter reads a single refresh token from the environment,
-    which would make both agents act as one Google identity. This is the next
-    piece of work and is deliberately not started.
+11. **Google OAuth is not built yet.** There is no callback route, and the
+    adapter still reads a single refresh token from the environment. The
+    *storage* for per-person tokens exists and is tested
+    (`integration_accounts`), but nothing writes to it. This is Phase 3.
+12. **Rate limits and the in-memory store are per instance.** Both assume a
+    single server. Swap in a durable `RateLimitStore` before scaling out.
 
 ---
 
@@ -542,9 +612,10 @@ src/
     integrations/   cloze, email, calendar, mls, activepipe, registry
     scoring/        Deterministic ranking engines
     workflows/      The six named workflows
-supabase/migrations/  Schema, RLS, and the approved-member allowlist
+supabase/migrations/  Schema, RLS, allowlist, per-person integration accounts
 scripts/              Supabase seed loader
-tests/                unit, integration and security tests, plus tests/e2e/ browser smoke
+tests/                unit, integration, security and real-Postgres RLS tests,
+                      plus tests/e2e/ browser smoke
 ```
 
 `IMPLEMENTATION_NOTES.md` records the architectural decisions and the

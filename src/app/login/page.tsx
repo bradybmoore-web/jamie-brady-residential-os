@@ -1,14 +1,15 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { demoAuthBlocked, demoAuthWarning, getSession, listLoginProfiles } from "@/lib/auth/session";
+import { demoAuthBlocked, demoAuthWarning, getAuthState, listLoginProfiles } from "@/lib/auth/session";
 import { capabilities } from "@/lib/env";
 import { LoginForm } from "./login-form";
 
 export const metadata: Metadata = { title: "Sign in" };
 
 export default async function LoginPage() {
-  const session = await getSession();
-  if (session) redirect("/today");
+  const authState = await getAuthState();
+  if (authState.status === "authorized") redirect("/today");
+  if (authState.status === "pending_approval") redirect("/pending-approval");
 
   const profiles = capabilities.supabase ? [] : await listLoginProfiles();
 

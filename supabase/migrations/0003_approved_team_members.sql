@@ -163,6 +163,9 @@ end;
 $$;
 
 revoke all on function public.approve_team_member(text) from public, anon, authenticated;
+-- Granted explicitly rather than relying on Supabase's default function
+-- privileges, so this keeps working if those defaults ever change.
+grant execute on function public.approve_team_member(text) to service_role;
 
 -- Revoke access for someone who should no longer see client data.
 create or replace function public.revoke_team_member(target_email text)
@@ -180,3 +183,4 @@ end;
 $$;
 
 revoke all on function public.revoke_team_member(text) from public, anon, authenticated;
+grant execute on function public.revoke_team_member(text) to service_role;

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { getSession } from "@/lib/auth/session";
+import { getAuthState } from "@/lib/auth/session";
 import { getStore } from "@/lib/data/store";
 import { capabilities } from "@/lib/env";
 import { BRAND_ICON } from "@/components/shell/nav";
@@ -10,8 +10,10 @@ import { SignOutButton } from "@/components/shell/sign-out";
 import { initials } from "@/lib/utils";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
-  const session = await getSession();
-  if (!session) redirect("/login");
+  const authState = await getAuthState();
+  if (authState.status === "pending_approval") redirect("/pending-approval");
+  if (authState.status !== "authorized") redirect("/login");
+  const { session } = authState;
 
   const store = await getStore();
   const actions = await store.listAIActions();

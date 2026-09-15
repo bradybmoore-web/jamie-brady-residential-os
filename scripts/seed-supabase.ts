@@ -1,21 +1,21 @@
 /**
- * Load the demo dataset into a Supabase project.
+ * Load the demo business data into a Supabase project.
  *
  *   npm run db:seed
  *
- * Requires NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY, and that the
- * migrations in supabase/migrations/ have already been applied.
+ * This loads fictional contacts, listings, leads and activity so the product is
+ * demonstrable. It does NOT create accounts and it does NOT grant anybody
+ * access — authorization is handled separately and deliberately:
  *
- * Profiles are tied to auth users, so this creates (or finds) an auth user per
- * agent and remaps every owner reference in the dataset onto the real profile
- * ids. Re-running it is safe: rows are upserted by id.
+ *   npm run team:allow -- person@example.com
  *
- * It also seeds `allowed_team_emails` with the two agent addresses and approves
- * their profiles. Nobody else who signs up gets access — see migration
- * 0003_approved_team_members.sql.
+ * Requires NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY, and the
+ * migrations must already be applied. Re-running is safe: rows are upserted by
+ * id, so nothing duplicates.
  *
- * Every row it writes is marked `is_seed = true`, so you can remove all of it
- * later with `delete from <table> where is_seed;`.
+ * Every row it writes is marked `is_seed = true`. The application labels those
+ * rows "Demo" everywhere they appear, and you can remove all of it later with
+ * `delete from <table> where is_seed;`.
  */
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { buildSeedDataset } from "../src/lib/data/seed";
@@ -29,7 +29,7 @@ if (!url || !serviceKey) {
   console.error(
     "Missing configuration.\n" +
       "  NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must both be set.\n" +
-      "  Find them under Project Settings -> API in the Supabase dashboard.",
+      "  Both are in the Supabase dashboard under Project Settings -> API.",
   );
   process.exit(1);
 }
@@ -40,20 +40,17 @@ const supabase = createClient(url, serviceKey, {
 
 async function main() {
   const dataset = buildSeedDataset();
-  console.log(`Seeding ${url}\n`);
+  console.log(`\nSeeding demo business data into ${url}\n`);
 
-  await seedAllowlist(supabase, dataset);
-  const profileIdBySeedId = await seedProfiles(supabase, dataset);
-  remapOwners(dataset, profileIdBySeedId);
+  const owners = await approvedProfiles(supabase);
+  remapOwners(dataset, owners);
 
   // Order matters: foreign keys point backwards through this list.
   await upsert("properties", dataset.properties);
   await upsert("contacts_cache", dataset.contacts.map(stripContactChildren));
   await upsert(
     "contact_notes",
-    dataset.contacts.flatMap((c) =>
-      c.notes.map((n) => ({ ...n, authorId: profileIdBySeedId.get(n.authorId) ?? n.authorId })),
-    ),
+    dataset.contacts.flatMap((c) => c.notes.map((n) => ({ ...n, authorId: owners[0] }))),
   );
   await upsert("stated_plans", dataset.contacts.flatMap((c) => c.statedPlans));
   await upsert("listings", dataset.listings);
@@ -69,102 +66,46 @@ async function main() {
   await upsert("marketing_assets", dataset.marketingAssets);
   await upsert("integration_connections", dataset.integrations);
 
-  console.log("\nDone. Sign in with either agent's email and the temporary password printed above.");
   console.log(
-    "Only the two allowlisted addresses have access. Anyone else who signs up gets an\n" +
-      "unapproved profile and can read nothing. To add someone later, run:\n" +
-      "  select public.approve_team_member('person@example.com');",
+    "\nDone. Every row above is demo data and is labelled as such in the app.\n" +
+      "Remove it later with:  delete from contacts_cache where is_seed;  (and so on per table)\n",
   );
 }
 
 /**
- * The allowlist has to exist before the auth users, because `handle_new_user`
- * reads it to decide whether a new profile is approved.
+ * Seed rows reference the two seeded agent profiles. Point them at the real
+ * approved accounts instead, so the demo data belongs to whoever actually uses
+ * the system. This script never creates an account — that would mean inventing
+ * a password for a real project, which is not its job.
  */
-async function seedAllowlist(client: SupabaseClient, dataset: Dataset) {
-  const rows = dataset.profiles.map((p) => ({
-    email: p.email.toLowerCase(),
-    note: "Seeded team member",
-  }));
-  const { error } = await client.from("allowed_team_emails").upsert(rows, { onConflict: "email" });
-  if (error) throw new Error(`Could not seed the team allowlist: ${error.message}`);
-  console.log(`  allowlist                ${rows.map((r) => r.email).join(", ")}`);
-}
+async function approvedProfiles(client: SupabaseClient): Promise<string[]> {
+  const { data, error } = await client
+    .from("profiles")
+    .select("id, email, full_name")
+    .eq("approved", true)
+    .order("created_at");
+  if (error) throw new Error(`Could not read profiles: ${error.message}`);
 
-/**
- * Profiles hang off auth.users, so each seeded agent needs a real auth user.
- * The `handle_new_user` trigger creates the profile row; we then align it with
- * the seed data.
- */
-async function seedProfiles(client: SupabaseClient, dataset: Dataset) {
-  const map = new Map<string, string>();
-
-  for (const profile of dataset.profiles) {
-    const { data: existing } = await client
-      .from("profiles")
-      .select("id")
-      .eq("email", profile.email)
-      .maybeSingle();
-
-    if (existing) {
-      await client
-        .from("profiles")
-        .update({ approved: true, approved_at: new Date().toISOString() })
-        .eq("id", existing.id);
-      map.set(profile.id, existing.id as string);
-      console.log(`  profile  ${profile.email} (existing, approved)`);
-      continue;
-    }
-
-    const password = `${crypto.randomUUID()}Aa1!`;
-    const { data: created, error } = await client.auth.admin.createUser({
-      email: profile.email,
-      password,
-      email_confirm: true,
-      user_metadata: { full_name: profile.fullName },
-    });
-    if (error || !created.user) {
-      throw new Error(`Could not create auth user ${profile.email}: ${error?.message}`);
-    }
-
-    const { data: row, error: profileError } = await client
-      .from("profiles")
-      .select("id")
-      .eq("user_id", created.user.id)
-      .maybeSingle();
-    if (profileError || !row) {
-      throw new Error(
-        `Auth user created but no profile row appeared for ${profile.email}. ` +
-          "Check that migration 0002_rls.sql (which installs the handle_new_user trigger) has been applied.",
-      );
-    }
-
-    // Written with the service role, which bypasses both RLS and the
-    // column-level grants that stop a signed-in user approving themselves.
-    await client
-      .from("profiles")
-      .update({
-        full_name: profile.fullName,
-        title: profile.title,
-        phone: profile.phone,
-        role: profile.role,
-        approved: true,
-        approved_at: new Date().toISOString(),
-      })
-      .eq("id", row.id);
-
-    map.set(profile.id, row.id as string);
-    console.log(`  profile  ${profile.email} (created)`);
-    console.log(`           temporary password: ${password}`);
-    console.log(`           change it immediately, or send a password reset.`);
+  if (!data || data.length === 0) {
+    throw new Error(
+      "No approved accounts exist yet, so there is nobody to own the demo data.\n" +
+        "  1. Allowlist the addresses:  npm run team:allow -- person@example.com\n" +
+        "  2. Have each person sign up in the app.\n" +
+        "  3. Re-run this command.",
+    );
   }
 
-  return map;
+  for (const profile of data) console.log(`  owner    ${profile.email} (${profile.full_name})`);
+  return data.map((p) => p.id as string);
 }
 
-/** Every owner_id / assigned_to in the dataset points at a seed profile id. */
-function remapOwners(dataset: Dataset, map: Map<string, string>) {
-  const remap = (id: string) => map.get(id) ?? id;
+/** Every owner_id / assigned_to in the dataset points at a seeded profile id. */
+function remapOwners(dataset: Dataset, owners: string[]) {
+  const seedIds = dataset.profiles.map((p) => p.id);
+  // Seed agent 1 -> first approved account, seed agent 2 -> second if present.
+  const mapping = new Map(seedIds.map((id, i) => [id, owners[Math.min(i, owners.length - 1)]]));
+  const remap = (id: string) => mapping.get(id) ?? owners[0];
+
   for (const row of [
     ...dataset.contacts,
     ...dataset.listings,
@@ -177,6 +118,9 @@ function remapOwners(dataset: Dataset, map: Map<string, string>) {
     if ("ownerId" in row) (row as { ownerId: string }).ownerId = remap((row as { ownerId: string }).ownerId);
   }
   for (const lead of dataset.leads) lead.assignedTo = remap(lead.assignedTo);
+  for (const update of dataset.sellerUpdates) {
+    if (update.approvedBy) update.approvedBy = remap(update.approvedBy);
+  }
 }
 
 function stripContactChildren(contact: Dataset["contacts"][number]) {
@@ -193,13 +137,11 @@ async function upsert(table: string, records: object[]) {
   }
   const rows = records.map((r) => recordToRow(r as Record<string, unknown>));
   const { error } = await supabase.from(table).upsert(rows, { onConflict: "id" });
-  if (error) {
-    throw new Error(`Failed to seed ${table}: ${error.message}`);
-  }
+  if (error) throw new Error(`Failed to seed ${table}: ${error.message}`);
   console.log(`  ${table.padEnd(24)} ${records.length}`);
 }
 
 main().catch((error) => {
-  console.error(`\nSeeding failed: ${error instanceof Error ? error.message : error}`);
+  console.error(`\nSeeding failed: ${error instanceof Error ? error.message : error}\n`);
   process.exit(1);
 });

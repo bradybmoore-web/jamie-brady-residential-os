@@ -13,7 +13,11 @@
     "check": "npm run lint && npm run typecheck && npm run test && npm run build",
     "db:push": "supabase db push",
     "db:seed": "tsx scripts/seed-supabase.ts",
-    "test:e2e": "node tests/e2e/smoke.mjs"
+    "test:e2e": "node tests/e2e/smoke.mjs",
+    "db:verify": "tsx scripts/verify-supabase.ts",
+    "team:list": "tsx scripts/team.ts list",
+    "team:allow": "tsx scripts/team.ts allow",
+    "team:revoke": "tsx scripts/team.ts revoke"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.125.0",
@@ -30,6 +34,7 @@
     "zod": "^4.6.1"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
