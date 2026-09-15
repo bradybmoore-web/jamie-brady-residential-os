@@ -322,6 +322,15 @@ select public.revoke_team_member('person@example.com');
 Addresses are never written into this repository. They live in the database and
 are passed on the command line.
 
+Addresses are stored in a canonical form — lowercased, with whitespace removed
+— and compared that way at signup. Case and an accidental trailing or
+non-breaking space therefore cannot cause a silent mismatch; a check constraint
+refuses to store an address that is not already canonical. Nothing else is
+folded: dots and `+` suffixes distinguish real mailboxes at some providers, so
+they still have to match exactly. If an account comes out unapproved anyway,
+`supabase/setup/diagnose-approval.sql` names the reason without printing a
+single address.
+
 A signed-in user **cannot approve themselves**. `authenticated` has no column
 privilege on `approved`, `approved_at`, `approved_by`, `user_id` or `email`, and
 the insert policy independently rejects a self-inserted approved row. Both
