@@ -58,20 +58,45 @@ async function main() {
   const { error: approvedError } = await admin.from("profiles").select("approved, approved_at").limit(1);
   check(!approvedError, "profiles.approved exists", approvedError?.message);
 
-  // 3. Anonymous access reads nothing. This is the test that matters most.
+  // 3. Anonymous access reads nothing. This is the test that matters most —
+  //    and the one easiest to get a false PASS from. An empty table yields no
+  //    rows to an anonymous visitor whether or not a policy is protecting it,
+  //    so each table is only counted as proven when the service role can see
+  //    rows there that the anonymous client cannot.
+  const PUBLIC_FACING = [
+    "contacts_cache", "leads", "listings", "profiles", "allowed_team_emails", "integration_accounts",
+  ];
   if (anonKey) {
     const anon = createClient(url!, anonKey, { auth: { autoRefreshToken: false, persistSession: false } });
     const leaks: string[] = [];
-    for (const table of ["contacts_cache", "leads", "listings", "profiles", "allowed_team_emails", "integration_accounts"]) {
+    const proven: string[] = [];
+    const unproven: string[] = [];
+
+    for (const table of PUBLIC_FACING) {
+      const { count } = await admin.from(table).select("*", { count: "exact", head: true });
       const { data, error } = await anon.from(table).select("*").limit(1);
       // An error (RLS denial) is the desired outcome. Rows are not.
       if (!error && (data?.length ?? 0) > 0) leaks.push(table);
+      else if ((count ?? 0) > 0) proven.push(table);
+      else unproven.push(table);
     }
+
     check(
       leaks.length === 0,
       "An anonymous visitor reads no data",
-      leaks.length ? `LEAKING: ${leaks.join(", ")}. Do not put real data in this project.` : undefined,
+      leaks.length
+        ? `LEAKING: ${leaks.join(", ")}. Do not put real data in this project.`
+        : `Proven on ${proven.length} populated table(s).`,
     );
+
+    if (unproven.length > 0) {
+      check(
+        true,
+        `${unproven.length} table(s) empty, so denial could not be proven there`,
+        `${unproven.join(", ")}. An empty table hides nothing either way. ` +
+          "supabase/setup/03-negative-tests.sql proves denial regardless, by inserting a canary row.",
+      );
+    }
   } else {
     check(false, "Anonymous access checked", "Set NEXT_PUBLIC_SUPABASE_ANON_KEY to run this check.");
   }
@@ -84,13 +109,25 @@ async function main() {
     (allowlist?.length ?? 0) === 0 ? "Run: npm run team:allow -- person@example.com" : `${allowlist!.length} address(es)`,
   );
 
-  // 5. Approved accounts exist (or will once they sign up).
+  // 5. Somebody is actually approved. Without this the application is
+  //    unusable: every policy calls is_team_member(), which requires it.
   const { data: profiles } = await admin.from("profiles").select("email, approved");
   const approved = (profiles ?? []).filter((p) => p.approved);
+  const waiting = (profiles?.length ?? 0) - approved.length;
   check(
-    true,
-    `${approved.length} approved account(s), ${(profiles?.length ?? 0) - approved.length} awaiting approval`,
+    approved.length > 0,
+    `${approved.length} approved account(s), ${waiting} awaiting approval`,
+    approved.length === 0
+      ? "Nobody is approved, so nobody can read anything. Allowlist an address before the account is created."
+      : undefined,
   );
+
+  // 6. A throwaway account left behind keeps an unapproved identity alive for
+  //    no reason. Harmless — it can read nothing — but worth clearing up.
+  if (waiting > 0) {
+    check(true, `${waiting} unapproved account(s) present`,
+      "These can read nothing. If one is a leftover test account, delete it in Authentication -> Users.");
+  }
 
   // --- report ---------------------------------------------------------------
   console.log(results.map((r) => `  ${r.ok ? "PASS" : "FAIL"}  ${r.label}${r.detail ? `\n        ${r.detail}` : ""}`).join("\n"));
@@ -100,7 +137,14 @@ async function main() {
     console.log(`\n${failed} check(s) failed. Do not switch the application over yet.\n`);
     process.exit(1);
   }
-  console.log("\nAll checks passed. This project is safe to point the application at.\n");
+  console.log(
+    "\nAll checks passed. What this does NOT prove, because it runs as the\n" +
+      "service role and over the REST API:\n" +
+      "  - that an account which exists but was never allowlisted is denied\n" +
+      "  - that no account can approve itself\n" +
+      "  - that row level security is enabled on every table\n" +
+      "Run supabase/setup/03-negative-tests.sql in the SQL editor for those.\n",
+  );
 }
 
 main().catch((error) => {

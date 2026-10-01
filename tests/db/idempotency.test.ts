@@ -117,9 +117,13 @@ describe("the operator-facing SQL scripts", () => {
     );
     expect(results.rows.length).toBeGreaterThanOrEqual(10);
 
-    const failures = results.rows.filter((r) => r.result !== "PASS");
+    // INFO rows report state that is not a security property (whether an
+    // optional hardening migration has been applied). Everything else must
+    // read PASS — INVALID especially, which is how the script reports a check
+    // it could not trust rather than quietly claiming success.
+    const failures = results.rows.filter((r) => r.result !== "PASS" && r.result !== "INFO");
     expect(
-      failures.map((f) => `${f.check_name}: ${f.detail}`),
+      failures.map((f) => `${f.result} — ${f.check_name}: ${f.detail}`),
       "the operator-facing security script reported a failure",
     ).toEqual([]);
   }, 60_000);

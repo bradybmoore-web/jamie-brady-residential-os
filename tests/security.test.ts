@@ -582,6 +582,40 @@ function grepSource(needle: string, roots: string[]): string[] {
   return hits;
 }
 
+describe("the service role never serves a user request", () => {
+  /**
+   * `SupabaseStore` queries as the signed-in user, so row level security — not
+   * application code — is what actually enforces access. That is only true as
+   * long as nothing in the request path reaches for the service-role client,
+   * which bypasses RLS entirely.
+   *
+   * It is also what lets the application run with nothing but the two
+   * browser-safe public values in its environment: the secret key is needed by
+   * maintenance scripts and by nothing else. A regression here would quietly
+   * turn a published credential into a requirement.
+   */
+  it("is referenced by no file under src/ except the module that defines it", () => {
+    const callers = grepSource("getSupabaseAdminClient", ["src"]).filter(
+      (f) => !f.endsWith("lib/supabase/server.ts"),
+    );
+    expect(callers, "a request path reached for the RLS-bypassing client").toEqual([]);
+  });
+
+  it("is not read from the environment anywhere under src/ but lib/env.ts", () => {
+    const readers = grepSource("SUPABASE_SERVICE_ROLE_KEY", ["src"]).filter(
+      (f) => !f.endsWith("lib/env.ts") && !f.endsWith("lib/supabase/server.ts"),
+    );
+    expect(readers).toEqual([]);
+  });
+
+  it("leaves the application fully configured by the public values alone", () => {
+    const source = readFileSync("src/lib/env.ts", "utf8");
+    expect(section(source, "export const capabilities", "} as const;")).toContain(
+      "supabase: Boolean(env.supabaseUrl && env.supabaseAnonKey)",
+    );
+  });
+});
+
 /** The text from `start` up to the first `end` after it. */
 function section(text: string, start: string, end: string): string {
   const from = text.indexOf(start);

@@ -103,7 +103,22 @@ Status legend: `[x]` done · `[~]` done with a mock/stub behind a real interface
       accounts and grants no access
 - [x] Real-PostgreSQL RLS tests (PGlite) — 45 assertions
 - [x] Schema conformance tests — 20 assertions proving the domain model fits
-- [ ] Switch to Supabase (blocked: needs Brady to create the project)
+- [x] `0006_allowlist_normalisation.sql` — allowlist addresses stored and
+      matched in a canonical form, so invisible whitespace cannot silently deny
+      approval; a check constraint refuses a non-canonical address
+- [x] `supabase/setup/` — `all-migrations.sql` (generated, idempotent),
+      `02-allowlist.sql`, `03-negative-tests.sql`, `diagnose-approval.sql`
+- [x] Project created; migrations 0001-0005 applied by hand in the SQL editor
+- [x] Public signup disabled; anonymous sign-ins and manual linking off
+- [x] Allowlist populated with five business identities across both the
+      kupersir.com and sothebysrealty.com domains. No personal address.
+- [x] Jamie and Brady have separate Auth accounts, both approved and confirmed
+- [x] An identity mismatch between the two domains diagnosed without either
+      address entering a chat transcript, and repaired only after the profile
+      address was shown to match the allowlist entry exactly
+- [ ] Negative authorization tests run against the live project (`03-negative-tests.sql`)
+- [ ] Migration 0006 applied to the live project
+- [ ] Switch the application over (blocked on the two steps above)
 
 ## Deferred (explicitly out of MVP scope)
 - [ ] Real outbound send (email/SMS transport)

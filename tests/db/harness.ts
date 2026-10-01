@@ -46,12 +46,23 @@ export interface TestDatabase {
   asUser(userId: string, sql: string, params?: unknown[]): Promise<QueryResult>;
   /** Run SQL with the service role, which bypasses RLS. */
   asServiceRole(sql: string, params?: unknown[]): Promise<QueryResult>;
+  /** Apply one further migration by filename, for tests that staged an older state. */
+  applyMigration(file: string): Promise<void>;
   /** Create an auth user, firing the `handle_new_user` trigger. */
   signUp(email: string, fullName?: string): Promise<{ userId: string; profileId: string | null }>;
   close(): Promise<void>;
 }
 
-export async function createTestDatabase(): Promise<TestDatabase> {
+export interface TestDatabaseOptions {
+  /**
+   * Stop after this migration, so a test can reproduce the state a project was
+   * actually in and then apply the next migration to it. `applyMigration()`
+   * carries on from there.
+   */
+  upTo?: string;
+}
+
+export async function createTestDatabase(options: TestDatabaseOptions = {}): Promise<TestDatabase> {
   const db = new PGlite();
 
   // --- the Supabase-shaped environment our policies assume ------------------
@@ -94,7 +105,12 @@ export async function createTestDatabase(): Promise<TestDatabase> {
 
   if (files.length === 0) throw new Error("No migrations found");
 
-  for (const file of files) {
+  if (options.upTo && !files.includes(options.upTo)) {
+    throw new Error(`No such migration: ${options.upTo}`);
+  }
+  const selected = options.upTo ? files.slice(0, files.indexOf(options.upTo) + 1) : files;
+
+  for (const file of selected) {
     const sql = readFileSync(join(MIGRATIONS_DIR, file), "utf8");
     try {
       await db.exec(sql.replace(PGCRYPTO_LINE, "-- pgcrypto: gen_random_uuid() is native in PG13+"));
@@ -119,6 +135,10 @@ export async function createTestDatabase(): Promise<TestDatabase> {
 
   return {
     raw: db,
+    async applyMigration(file: string) {
+      const sql = readFileSync(join(MIGRATIONS_DIR, file), "utf8");
+      await db.exec(sql.replace(PGCRYPTO_LINE, "-- pgcrypto: gen_random_uuid() is native in PG13+"));
+    },
     asAnon: (sql, params) => runAs("anon", null, sql, params),
     asUser: (userId, sql, params) => runAs("authenticated", userId, sql, params),
     asServiceRole: (sql, params) => runAs("service_role", null, sql, params),

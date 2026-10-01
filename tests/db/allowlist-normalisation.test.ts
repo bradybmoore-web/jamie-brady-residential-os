@@ -134,3 +134,92 @@ describe("the migration source itself", () => {
     expect(stray).toEqual([]);
   });
 });
+
+describe("applying 0006 to a database that already holds bad rows", () => {
+  /**
+   * The production case. The project ran migrations 0001-0005, addresses were
+   * entered by hand into the SQL editor, and only then was 0006 written. The
+   * repair path — deduplicate, normalise, swap the constraint — therefore has
+   * to work against a table that is already populated and already wrong. That
+   * is the one situation the migration exists for, so it is the one that gets
+   * executed here rather than reasoned about.
+   */
+  const stage = async () => {
+    const db = await createTestDatabase({ upTo: "0005_profile_provenance.sql" });
+    // The old constraint accepted all of these.
+    await db.asServiceRole(`
+      insert into public.allowed_team_emails (email, note) values
+        ('jamie.moore@example.test ',      'Jamie trailing space'),
+        (' brady.moore@example.test',      'Brady leading space'),
+        ('shared@example.test' || chr(160),'Shared non-breaking space'),
+        ('clean@example.test',             'Already canonical')
+    `);
+    return db;
+  };
+
+  it("normalises every row and leaves the notes intact", async () => {
+    const db = await stage();
+    await db.applyMigration("0006_allowlist_normalisation.sql");
+    const r = await db.asServiceRole("select email, note from public.allowed_team_emails order by email");
+    expect(r.rows.map((x) => (x as { email: string }).email)).toEqual([
+      "brady.moore@example.test",
+      "clean@example.test",
+      "jamie.moore@example.test",
+      "shared@example.test",
+    ]);
+    expect(r.rows).toHaveLength(4);
+    await db.close();
+  }, 120_000);
+
+  it("collapses rows that differed only by whitespace, keeping the oldest", async () => {
+    const db = await createTestDatabase({ upTo: "0005_profile_provenance.sql" });
+    await db.asServiceRole(`
+      insert into public.allowed_team_emails (email, note, created_at) values
+        ('jamie.moore@example.test',  'original', now() - interval '1 day'),
+        ('jamie.moore@example.test ', 'duplicate', now())
+    `);
+    await db.applyMigration("0006_allowlist_normalisation.sql");
+    const r = await db.asServiceRole("select email, note from public.allowed_team_emails");
+    expect(r.rows).toEqual([{ email: "jamie.moore@example.test", note: "original" }]);
+    await db.close();
+  }, 120_000);
+
+  it("approves an account that the old trigger would have skipped", async () => {
+    const db = await stage();
+    await db.applyMigration("0006_allowlist_normalisation.sql");
+    const { userId } = await db.signUp("jamie.moore@example.test");
+    const r = await db.asServiceRole("select approved from public.profiles where user_id = $1", [userId]);
+    expect(r.rows[0]).toMatchObject({ approved: true });
+    await db.close();
+  }, 120_000);
+
+  it("still does not approve accounts that already existed", async () => {
+    const db = await stage();
+    const { userId } = await db.signUp("jamie.moore@example.test"); // skipped: row had a space
+    const before = await db.asServiceRole("select approved from public.profiles where user_id = $1", [userId]);
+    expect(before.rows[0], "precondition: the old trigger skipped this account").toMatchObject({
+      approved: false,
+    });
+
+    await db.applyMigration("0006_allowlist_normalisation.sql");
+
+    const after = await db.asServiceRole("select approved from public.profiles where user_id = $1", [userId]);
+    expect(after.rows[0], "the migration must not silently grant access").toMatchObject({
+      approved: false,
+    });
+    await db.close();
+  }, 120_000);
+
+  it("leaves the repaired account one explicit call away from approval", async () => {
+    const db = await stage();
+    const { userId } = await db.signUp("jamie.moore@example.test");
+    await db.applyMigration("0006_allowlist_normalisation.sql");
+    await db.asServiceRole("select public.approve_team_member($1)", ["jamie.moore@example.test"]);
+    const r = await db.asServiceRole(
+      "select approved, approved_at is not null as stamped from public.profiles where user_id = $1",
+      [userId],
+    );
+    expect(r.rows[0]).toMatchObject({ approved: true, stamped: true });
+    await db.close();
+  }, 120_000);
+});
